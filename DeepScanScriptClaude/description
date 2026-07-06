@@ -1,0 +1,1 @@
+Read-only deep scan of /mnt/user — top dirs, top files, age histogram, duplicates, BTRFS/ZFS stats, Docker / VM disk usage. Produces a single tarball under /mnt/user/appdata/DeepScanScriptClaude/ ready to upload back to Claude for a file-level analysis.

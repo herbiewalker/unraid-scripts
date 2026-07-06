@@ -1,0 +1,6 @@
+.DS_Store
+Thumbs.db
+*.log
+
+# Internal working notes — not repo content
+HANDOFF.md

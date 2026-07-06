@@ -1,0 +1,910 @@
+#!/bin/bash
+# DeepScanScriptClaude v0.3.2 — User Scripts plugin entry-point
+# ------------------------------------------------------------------------
+# Lives at: /boot/config/plugins/user.scripts/scripts/DeepScanScriptClaude/script
+# Run via:  Settings → User Scripts → DeepScanScriptClaude → "Run Script"
+#           or         "Run in Background" for long arrays.
+#
+# Read-only.  No file is moved, modified, or deleted (except the single rm
+# of intermediate working files immediately before the final tarball).
+# Heaviest cost is one full disk-walk of /mnt/user plus sha256 of files
+# >= 100 MiB whose size collides with another file (the duplicate finder).
+#
+# Output:   /mnt/user/appdata/DeepScanScriptClaude/storage-scan-<host>-<stamp>.tar.gz
+#           Also leaves a copy in:
+#           /boot/config/plugins/user.scripts/scripts/DeepScanScriptClaude/output/
+#
+# Logs (inside the tarball):
+#   _run.log    — timestamped phase-by-phase progress with elapsed times
+#   _errors.log — all stderr from every command; empty means clean run
+#   _timing.csv — phase id, name, elapsed seconds (-1 = skipped)
+#   summary.json — machine-readable key metrics
+#
+# Runtime:  server-a  ~5-10 min   (3.7 TB)
+#           server-b         ~10-15 min  (1.3 TB used)
+#           server-c    ~30-60 min  (53 TB)  — schedule off-hours
+#
+# Flags: --quick (skip phases 6+8), --all-extensions, --help
+# ------------------------------------------------------------------------
+
+set -u
+set -o pipefail
+
+SCRIPT_VERSION="0.3.2"
+
+QUICK=0
+ALL_EXTENSIONS=0
+for _arg in "$@"; do
+  case "$_arg" in
+    --quick)          QUICK=1 ;;
+    --all-extensions) ALL_EXTENSIONS=1 ;;
+    --help|-h)
+      printf 'Usage: script [--quick] [--all-extensions] [--help]\n'
+      printf '  --quick           Skip phases 6 (age histogram) and 8 (duplicates)\n'
+      printf '  --all-extensions  Hash ALL extensions in duplicate finder (default: media+archive only)\n'
+      exit 0 ;;
+    *) printf 'Unknown flag: %s\n' "$_arg" >&2; exit 2 ;;
+  esac
+done
+
+host=$(hostname)
+stamp=$(date +%Y%m%d-%H%M)
+script_dir="/boot/config/plugins/user.scripts/scripts/DeepScanScriptClaude"
+_run_start=$(date +%s)
+
+# ============================================================
+# Output root — pick first writable candidate
+# ============================================================
+choose_outroot() {
+  for cand in /mnt/user/appdata /mnt/user/data /mnt/user/Backups /mnt/user/BackUps /mnt/user/isos; do
+    if [ -d "$cand" ]; then
+      echo "$cand"
+      return
+    fi
+  done
+  # Last resort: flash drive (small, but always writable)
+  echo "$script_dir"
+}
+
+out_root=$(choose_outroot)/DeepScanScriptClaude
+mkdir -p "$out_root"
+
+work="$out_root/${host}-${stamp}"
+mkdir -p "$work"
+
+LOG="$work/_run.log"
+ERR_LOG="$work/_errors.log"
+
+# Route all stderr to the errors log from this point on.
+# Pre-flight / phase output goes to stdout (tee'd to _run.log via note()).
+exec 2>>"$ERR_LOG"
+
+# ============================================================
+# Logging helpers
+# ============================================================
+note() { echo "[$(date +%H:%M:%S)] $*" | tee -a "$LOG"; }
+
+_cur_phase_id=""; _cur_phase_csv=""; _cur_phase_t0=0
+phase_start() {
+  _cur_phase_id="$1"; _cur_phase_csv="$2"; shift 2
+  _cur_phase_t0=$(date +%s)
+  note ""; note "--- $* ---"
+}
+phase_end() {
+  local dt=$(( $(date +%s) - _cur_phase_t0 ))
+  note "    completed in ${dt}s"
+  printf '%s,%s,%d\n' "$_cur_phase_id" "$_cur_phase_csv" "$dt" >> "$work/_timing.csv"
+}
+phase_skip() {
+  note ""; note "  [SKIP]   Phase $1 (--quick)"
+  printf '%s,%s,-1\n' "$1" "$2" >> "$work/_timing.csv"
+}
+
+# human-readable bytes: numfmt if available, pure awk fallback
+human() {
+  if command -v numfmt &>/dev/null; then
+    numfmt --to=iec "$1" 2>/dev/null || printf '%s' "$1"
+  else
+    printf '%s' "$1" | awk '{
+      if ($1>=1099511627776) printf "%.1fT",$1/1099511627776
+      else if ($1>=1073741824) printf "%.1fG",$1/1073741824
+      else if ($1>=1048576) printf "%.1fM",$1/1048576
+      else if ($1>=1024) printf "%.1fK",$1/1024
+      else printf "%dB",$1
+    }'
+  fi
+}
+
+# ============================================================
+# Init timing CSV and JSON tracking vars
+# ============================================================
+printf 'phase,name,seconds\n' > "$work/_timing.csv"
+declare -A _share_sz _share_1mo
+_json_largest_bytes=0; _json_largest_path=""
+_json_dup_pairs=0; _json_dup_reclaimable=0
+_json_docker_containers=0; _json_docker_images=0; _json_docker_dangling=0
+_pf_passed="true"
+
+# ============================================================
+# Banner
+# ============================================================
+note "=================================================================="
+note " DeepScanScriptClaude v${SCRIPT_VERSION} — read-only storage scan"
+note " Host:        $host"
+note " Started:     $(date)"
+note " Output dir:  $work"
+note " Run log:     $LOG"
+note " Error log:   $ERR_LOG"
+note " Flags:       --quick=${QUICK}  --all-extensions=${ALL_EXTENSIONS}"
+note "=================================================================="
+
+# ============================================================
+# PRE-FLIGHT CHECKS
+# ============================================================
+note ""
+note "=== PRE-FLIGHT CHECKS ==="
+_pf_errors=0
+_pf_warnings=0
+
+pf_ok()   { note "  [OK]   $*"; }
+pf_warn() { note "  [WARN] $*"; _pf_warnings=$(( _pf_warnings + 1 )); }
+pf_fail() { note "  [FAIL] $*"; _pf_errors=$(( _pf_errors + 1 )); }
+
+# 1. Root — most commands (btrfs, zpool, docker) require it
+if [ "$(id -u)" -eq 0 ]; then
+  pf_ok "Running as root"
+else
+  pf_fail "Must run as root (current user: $(id -un)) — btrfs, zpool, docker require root"
+fi
+
+# 2. Unraid array — /mnt/user must exist and have shares
+if [ -d /mnt/user ] && [ -n "$(ls /mnt/user 2>/dev/null)" ]; then
+  _share_count=$(ls /mnt/user 2>/dev/null | wc -l)
+  pf_ok "/mnt/user mounted and accessible (${_share_count} shares visible)"
+elif [ -d /mnt/user ]; then
+  pf_warn "/mnt/user exists but is empty — Unraid array may not be started"
+else
+  pf_fail "/mnt/user not found — start the Unraid array before running this script"
+fi
+
+# 3. Output directory writable
+if touch "$work/.write-test" 2>/dev/null && rm -f "$work/.write-test" 2>/dev/null; then
+  pf_ok "Output directory writable: $work"
+else
+  pf_fail "Cannot write to output directory: $work"
+fi
+
+# 4. Free space on output destination
+_out_kb=$(df -Pk "$out_root" 2>/dev/null | awk 'NR==2{print $4}')
+if [ -n "$_out_kb" ]; then
+  _out_mib=$(( _out_kb / 1024 ))
+  if [ "$_out_kb" -lt 51200 ]; then
+    pf_fail "Only ${_out_mib} MiB free on output destination — need at least 50 MiB"
+  elif [ "$_out_kb" -lt 204800 ]; then
+    pf_warn "Only ${_out_mib} MiB free on output destination — large arrays may need more space"
+  else
+    pf_ok "Output destination free space: ${_out_mib} MiB"
+  fi
+else
+  pf_warn "Could not determine free space on output destination"
+fi
+
+# 5. Flash drive script dir (needed for the output mirror)
+if [ -d "$script_dir" ]; then
+  pf_ok "Script dir (flash mirror target): $script_dir"
+else
+  pf_warn "Script dir not found: $script_dir — flash mirror will be skipped"
+fi
+
+# 6. Essential tools — script cannot run without these
+note "  Checking essential tools ..."
+_missing_essential=()
+for _t in find awk sort du tar stat df mount free uname wc sed tr date hostname id; do
+  command -v "$_t" &>/dev/null || _missing_essential+=("$_t")
+done
+if [ "${#_missing_essential[@]}" -eq 0 ]; then
+  pf_ok "All essential tools present"
+else
+  for _t in "${_missing_essential[@]}"; do
+    pf_fail "Essential tool missing: $_t"
+  done
+fi
+
+# 7. Optional tools — phases degrade gracefully if absent, but note it
+note "  Checking optional tools ..."
+_opt_present=()
+for _t in numfmt sha256sum btrfs zpool zfs docker mountpoint; do
+  if command -v "$_t" &>/dev/null; then
+    _opt_present+=("$_t")
+  else
+    pf_warn "Optional tool absent: $_t — affected phases will produce partial output"
+  fi
+done
+if [ "${#_opt_present[@]}" -gt 0 ]; then
+  pf_ok "Optional tools present: ${_opt_present[*]}"
+fi
+
+# Pre-flight result
+note ""
+if [ "$_pf_errors" -gt 0 ]; then
+  note "  RESULT: $_pf_errors critical failure(s), $_pf_warnings warning(s) — ABORTING."
+  note "  Fix the [FAIL] items above and re-run."
+  _pf_passed="false"
+  exit 1
+elif [ "$_pf_warnings" -gt 0 ]; then
+  note "  RESULT: all critical checks passed. $_pf_warnings warning(s) — see above."
+else
+  note "  RESULT: all checks passed."
+fi
+note "=== END PRE-FLIGHT ==="
+
+# ============================================================
+# Phase 0 — System overview
+# ============================================================
+phase_start "0" "system_overview" "0. System overview"
+uname -a              > "$work/00-uname.txt"
+df -h                 > "$work/00-df.txt"
+df -hi                > "$work/00-df-inodes.txt"
+mount                 > "$work/00-mount.txt"
+free -h               > "$work/00-mem.txt"
+ls /mnt/              > "$work/00-mnt-listing.txt" 2>&1
+ls /mnt/user/         > "$work/00-shares.txt"      2>&1
+phase_end
+
+# ============================================================
+# Phase 1 — Per-share total size (fast)
+# ============================================================
+phase_start "1" "share_totals" "1. Per-share total size (du -sh /mnt/user/*)"
+{
+  echo "# Total size by user-share (aggregated across all disks). Sorted big -> small."
+  du -sh --apparent-size /mnt/user/* 2>/dev/null | sort -rh
+} > "$work/01-share-totals.txt"
+note "  -> 01-share-totals.txt ($(wc -l < "$work/01-share-totals.txt") lines)"
+
+# JSON tracking: capture per-share byte sizes
+while IFS=$'\t' read -r sz path; do
+  sn=$(basename "$path")
+  _share_sz["$sn"]=$sz
+done < <(du -sb --apparent-size /mnt/user/* 2>/dev/null)
+phase_end
+
+# ============================================================
+# Phase 2 — Per-disk top-level dirs
+# ============================================================
+phase_start "2" "disk_top_dirs" "2. Per-disk top-level dirs (du -sh /mnt/diskN/*)"
+for d in /mnt/disk* /mnt/cache* /mnt/pool*; do
+  [ -d "$d" ] || continue
+  fname=$(echo "$d" | sed 's|/|_|g; s|^_||')
+  {
+    echo "# $d"
+    du -sh --apparent-size "$d"/* 2>/dev/null | sort -rh
+  } > "$work/02-disk-${fname}.txt"
+done
+# Unassigned devices, if any
+for d in /mnt/disks/*; do
+  [ -d "$d" ] || continue
+  fname=$(echo "$d" | sed 's|/|_|g; s|^_||')
+  {
+    echo "# $d  (unassigned device)"
+    du -sh --apparent-size "$d"/* 2>/dev/null | sort -rh
+  } > "$work/02-disk-${fname}.txt"
+done
+note "  -> 02-disk-*.txt"
+phase_end
+
+# ============================================================
+# Phase 3 — Share x Disk usage matrix
+# ============================================================
+phase_start "3" "share_disk_matrix" "3. Share x Disk usage matrix"
+{
+  printf "%-30s" "share"
+  for d in /mnt/disk* /mnt/cache* /mnt/pool*; do
+    [ -d "$d" ] || continue
+    printf "%12s" "$(basename "$d")"
+  done
+  echo
+  for s in /mnt/user/*; do
+    [ -d "$s" ] || continue
+    printf "%-30s" "$(basename "$s")"
+    for d in /mnt/disk* /mnt/cache* /mnt/pool*; do
+      [ -d "$d" ] || continue
+      sub="$d/$(basename "$s")"
+      if [ -d "$sub" ]; then
+        sz=$(du -sb --apparent-size "$sub" 2>/dev/null | awk '{print $1}')
+        if [ -n "$sz" ] && [ "$sz" -gt 0 ]; then
+          human "$sz" | xargs printf "%12s"
+        else
+          printf "%12s" "."
+        fi
+      else
+        printf "%12s" "-"
+      fi
+    done
+    echo
+  done
+} > "$work/03-share-disk-matrix.txt"
+note "  -> 03-share-disk-matrix.txt"
+phase_end
+
+# ============================================================
+# Phase 4 — Top 30 directories per share (depth 1-2)
+# ============================================================
+phase_start "4" "share_top_dirs" "4. Top 30 directories per share"
+for s in /mnt/user/*; do
+  [ -d "$s" ] || continue
+  name=$(basename "$s")
+  fname=$(echo "$name" | tr ' /' '__')
+  {
+    echo "# Top 30 directories under $s (depth 1-2)"
+    du -hd 2 --apparent-size "$s" 2>/dev/null | sort -rh | head -30
+  } > "$work/04-share-${fname}-top-dirs.txt"
+done
+note "  -> 04-share-*-top-dirs.txt"
+phase_end
+
+# ============================================================
+# Phase 5 — Top 100 individual files >= 1 GiB server-wide
+#           + shared raw walk (reused by phase 5b)
+# ============================================================
+phase_start "5" "largest_files" "5. Top 100 files >= 1 GiB server-wide"
+
+# Walk once; store size, mtime-ts, nlink, path for reuse by phase 5b
+find /mnt/user -xdev -type f -size +1024M -printf '%s\t%T@\t%n\t%p\n' 2>/dev/null \
+  | sort -t$'\t' -k1 -rn > "$work/05-raw.tsv"
+
+{
+  echo "# Largest files >= 1 GiB across /mnt/user (size, path)"
+  head -100 "$work/05-raw.tsv" \
+    | awk -F'\t' '{ printf "%10.2f GiB  %s\n", $1/1073741824, $4 }'
+} > "$work/05-largest-files.txt"
+note "  -> 05-largest-files.txt"
+
+# JSON: largest file
+_json_largest_bytes=$(awk -F'\t' 'NR==1{printf "%d",$1}' "$work/05-raw.tsv" 2>/dev/null || echo 0)
+_json_largest_path=$(awk -F'\t' 'NR==1{print $4}' "$work/05-raw.tsv" 2>/dev/null || echo "")
+phase_end
+
+# ============================================================
+# Phase 5b — Large file dossier
+# ============================================================
+phase_start "5b" "large_file_dossier" "5b. Large file dossier"
+
+# Build size-set of files in download staging dirs (for failed-hardlink detection)
+> "$work/05b-dl-sizes.tmp"
+for _dldir in /mnt/user/data/torrents/complete /mnt/user/data/usenet/complete \
+              /mnt/user/torrents/complete /mnt/user/usenet/complete; do
+  [ -d "$_dldir" ] && find "$_dldir" -xdev -type f -printf '%s\n' 2>/dev/null >> "$work/05b-dl-sizes.tmp"
+done
+sort -un "$work/05b-dl-sizes.tmp" -o "$work/05b-dl-sizes.tmp" 2>/dev/null || true
+
+awk -F'\t' \
+  -v dlsizes="$work/05b-dl-sizes.tmp" \
+  -v hintfile="$work/05b-hint.tmp" \
+'
+function categorize(path, fname, ext,    lp) {
+  if (path ~ /\/mnt\/user\/domains\// || ext=="qcow2" || ext=="vmdk") return "vm"
+  if (path ~ /\/mnt\/user\/isos\// || ext=="iso") return "iso"
+  if (path ~ /\/mnt\/user\/system\// || fname=="docker.img" || fname=="libvirt.img") return "system"
+  if (path ~ /\/mnt\/user\/appdata\//) return "appdata"
+  lp = tolower(path)
+  if (lp ~ /\/tv\//) return "media-tv"
+  if (lp ~ /\/movies\/|\/media\//) return "media-movie"
+  if (lp ~ /\/torrents\/|\/usenet\/|\/incomplete\/|\/.unmanic\//) return "temp"
+  return "other"
+}
+
+function action_hint(cat, fname, path,    parts, n, i, container) {
+  if (fname == "docker.img")  return "Loop file. Migrate to directory mode to reclaim slack (How-To S5)."
+  if (fname == "libvirt.img") return "VM definition store. Keep; 1 GiB by design."
+  if (cat == "iso")   return "Install media. Delete if you no longer need it or have a newer version."
+  if (cat == "vm")    return "Live VM disk. Remove VM in Settings > VMs first; never delete directly."
+  if (cat == "temp")  return "Download staging. Safe to delete after *arr import + seeding complete."
+  if (cat == "appdata") {
+    n = split(path, parts, "/")
+    container = "unknown"
+    for (i=1; i<=n; i++) { if (parts[i]=="appdata" && i+1<=n) { container=parts[i+1]; break } }
+    return "Container data for [" container "]. Stop container before touching."
+  }
+  return ""
+}
+
+BEGIN {
+  FS = "\t"
+  # Load download dir sizes for failed-hardlink detection
+  while ((getline line < dlsizes) > 0) dl_sz[sprintf("%d", line+0)] = 1
+  close(dlsizes)
+  media_n=0; sys_n=0; other_n=0; failed_hl=0
+}
+{
+  size_bytes = $1; ts = int($2); nlink = int($3); path = $4
+  # Filename + parent
+  n = split(path, parts, "/"); fname = parts[n]; parent = (n>1 ? parts[n-1] : "")
+  # Extension
+  ext = fname; sub(/^.*\./, "", ext); ext = tolower(ext)
+  if (ext == fname) ext = ""
+  cat = categorize(path, fname, ext)
+  mtime = strftime("%Y-%m-%d %H:%M", ts)
+  size_gib = size_bytes / 1073741824
+
+  if (cat ~ /^media/) {
+    media_sz[media_n]   = size_gib
+    media_mt[media_n]   = mtime
+    media_nl[media_n]   = nlink
+    media_par[media_n]  = parent
+    media_fn[media_n]   = fname
+    media_path[media_n] = path
+    media_n++
+    # Failed hardlink: nlink==1 and same size exists in download dirs
+    if (nlink == 1 && (sprintf("%d", size_bytes+0) in dl_sz)) failed_hl++
+  } else if (cat == "other") {
+    other_sz[other_n]   = size_gib
+    other_mt[other_n]   = mtime
+    other_path[other_n] = path
+    other_n++
+  } else {
+    sys_sz[sys_n]   = size_gib
+    sys_mt[sys_n]   = mtime
+    sys_cat[sys_n]  = cat
+    sys_path[sys_n] = path
+    sys_fn[sys_n]   = fname
+    sys_n++
+  }
+}
+END {
+  print "========================================================================="
+  print " SECTION A - Media files (manage these through your *arr stack)"
+  print "========================================================================="
+  print " Use the Title column to search Radarr / Sonarr / Lidarr."
+  print " Manage -> Delete files from the WebUI to keep the database in sync."
+  print ""
+  printf "  %-7s  %-17s  %-35s  %s\n", "Size", "mtime", "Title", "File"
+  printf "  %-7s  %-17s  %-35s  %s\n", "-------", "-----------------", "-----------------------------------", "--------------------"
+  for (i=0; i<media_n; i++) {
+    hl = (media_nl[i] > 1) ? sprintf(" [HL x%d]", media_nl[i]) : ""
+    t = media_par[i]; if (length(t)>35) t = substr(t,1,32) "..."
+    f = media_fn[i];  if (length(f)>40) f = substr(f,1,37) "..."
+    printf "  %7.2f  %-17s  %-35s  %s%s\n", media_sz[i], media_mt[i], t, f, hl
+    printf "             (full path: %s)\n", media_path[i]
+  }
+
+  print ""
+  print "========================================================================="
+  print " SECTION B - System / ISO / VM / appdata files"
+  print "========================================================================="
+  print " Decide per-row whether to delete. Verify with lsof before removing."
+  print ""
+  printf "  %-7s  %-17s  %-9s  %-44s  %s\n", "Size", "mtime", "Category", "Full path", "Action hint"
+  printf "  %-7s  %-17s  %-9s  %-44s  %s\n", "-------", "-----------------", "---------", "--------------------------------------------", "--------------------------"
+  for (i=0; i<sys_n; i++) {
+    hint = action_hint(sys_cat[i], sys_fn[i], sys_path[i])
+    p = sys_path[i]; if (length(p)>44) p = "..." substr(p, length(p)-40)
+    printf "  %7.2f  %-17s  %-9s  %-44s  %s\n", sys_sz[i], sys_mt[i], sys_cat[i], p, hint
+  }
+
+  print ""
+  print "========================================================================="
+  print " SECTION C - Other / unrecognised"
+  print "========================================================================="
+  print " Files >=1 GiB that did not fit any known category. Inspect manually."
+  print ""
+  printf "  %-7s  %-17s  %s\n", "Size", "mtime", "Full path"
+  printf "  %-7s  %-17s  %s\n", "-------", "-----------------", "-----------------------------------------------"
+  for (i=0; i<other_n; i++)
+    printf "  %7.2f  %-17s  %s\n", other_sz[i], other_mt[i], other_path[i]
+
+  printf "%d\n", failed_hl > hintfile
+}
+' "$work/05-raw.tsv" > "$work/05b-largest-files-detailed.txt"
+
+_hl_candidates=$(cat "$work/05b-hint.tmp" 2>/dev/null || echo 0)
+note "  -> 05b-largest-files-detailed.txt"
+note "    Phase 5b: ${_hl_candidates} likely-failed-hardlink candidates (see Section A rows with no [HL] tag)"
+phase_end
+
+# ============================================================
+# Phase 6 — File-age histogram per share (counts + bytes)
+# ============================================================
+if [ "$QUICK" -eq 1 ]; then
+  phase_skip "6" "age_histogram"
+  echo "# Phase 6 skipped (--quick)" > "$work/06-age-histogram.txt"
+else
+  phase_start "6" "age_histogram" "6. File-age histogram per share (mtime)"
+  {
+    printf "=== File counts ===\n"
+    printf "%-30s %12s %12s %12s %12s %12s %12s\n" "share" ">2yr" "1-2yr" "6-12mo" "3-6mo" "1-3mo" "<1mo"
+    # Collect per-share data; also track bytes using combined find -printf '%s\n' | awk
+    declare -A _b2 _b12 _b6 _b3 _b1 _b0
+    for s in /mnt/user/*; do
+      [ -d "$s" ] || continue
+      name=$(basename "$s")
+      # Combined count+bytes per bucket in one find pass each
+      read -r a2_cnt  a2_sz  < <(find "$s" -xdev -type f -mtime +730              -printf '%s\n' 2>/dev/null | awk '{c++;b+=$1}END{print c+0,b+0}')
+      read -r a12_cnt a12_sz < <(find "$s" -xdev -type f -mtime +365 -mtime -730  -printf '%s\n' 2>/dev/null | awk '{c++;b+=$1}END{print c+0,b+0}')
+      read -r a6_cnt  a6_sz  < <(find "$s" -xdev -type f -mtime +180 -mtime -365  -printf '%s\n' 2>/dev/null | awk '{c++;b+=$1}END{print c+0,b+0}')
+      read -r a3_cnt  a3_sz  < <(find "$s" -xdev -type f -mtime +90  -mtime -180  -printf '%s\n' 2>/dev/null | awk '{c++;b+=$1}END{print c+0,b+0}')
+      read -r a1_cnt  a1_sz  < <(find "$s" -xdev -type f -mtime +30  -mtime -90   -printf '%s\n' 2>/dev/null | awk '{c++;b+=$1}END{print c+0,b+0}')
+      read -r a0_cnt  a0_sz  < <(find "$s" -xdev -type f -mtime -30               -printf '%s\n' 2>/dev/null | awk '{c++;b+=$1}END{print c+0,b+0}')
+      printf "%-30s %12d %12d %12d %12d %12d %12d\n" "$name" "$a2_cnt" "$a12_cnt" "$a6_cnt" "$a3_cnt" "$a1_cnt" "$a0_cnt"
+      _b2["$name"]=$a2_sz; _b12["$name"]=$a12_sz; _b6["$name"]=$a6_sz
+      _b3["$name"]=$a3_sz; _b1["$name"]=$a1_sz;   _b0["$name"]=$a0_sz
+      # JSON tracking
+      _share_1mo["$name"]=$a0_cnt
+    done
+    printf "\n=== Bytes per bucket ===\n"
+    printf "%-30s %12s %12s %12s %12s %12s %12s\n" "share" ">2yr" "1-2yr" "6-12mo" "3-6mo" "1-3mo" "<1mo"
+    for s in /mnt/user/*; do
+      [ -d "$s" ] || continue
+      name=$(basename "$s")
+      printf "%-30s %12s %12s %12s %12s %12s %12s\n" "$name" \
+        "$(human "${_b2[$name]:-0}")" "$(human "${_b12[$name]:-0}")" "$(human "${_b6[$name]:-0}")" \
+        "$(human "${_b3[$name]:-0}")" "$(human "${_b1[$name]:-0}")" "$(human "${_b0[$name]:-0}")"
+    done
+  } > "$work/06-age-histogram.txt"
+  note "  -> 06-age-histogram.txt"
+  phase_end
+fi
+
+# ============================================================
+# Phase 7 — Bytes by file extension
+# ============================================================
+phase_start "7" "extensions" "7. Bytes by file extension"
+{
+  echo "# Total size and count grouped by extension (top 25)"
+  find /mnt/user -xdev -type f -size +1M -printf '%s\t%f\n' 2>/dev/null \
+    | awk -F'\t' '{
+        n=$2; sub(/^.*\./,"",n); ext=tolower(n);
+        if(length(ext)>10 || ext==$2) ext="(none)";
+        sz[ext]+=$1; cnt[ext]++
+      } END {
+        for(e in sz) printf "%-15s  %15.2f GiB  %10d files\n", e, sz[e]/1073741824, cnt[e]
+      }' | sort -k2 -rn | head -25
+} > "$work/07-extensions.txt"
+note "  -> 07-extensions.txt"
+phase_end
+
+# ============================================================
+# Phase 8 — Duplicate finder with hardlinks + extension allowlist
+# ============================================================
+if [ "$QUICK" -eq 1 ]; then
+  phase_skip "8" "duplicates"
+  echo "# Phase 8 skipped (--quick)" > "$work/08-duplicates.txt"
+else
+  phase_start "8" "duplicates" "8. Duplicate finder (slowest step)"
+  _EXT_ALLOWLIST="mp4 mkv avi mov m4v ts webm iso img qcow2 vmdk zip tar tar.gz tgz 7z rar"
+
+  note "    Phase A: collect files >=100 MiB with inode+device"
+  # Format: size TAB inode TAB device TAB path
+  find /mnt/user -xdev -type f -size +100M -printf '%s\t%i\t%D\t%p\n' 2>/dev/null \
+    | sort -t$'\t' -k1 -n > "$work/08a-by-size.tsv"
+
+  # Size collisions (same size appears in more than one file)
+  awk -F'\t' 'NR==FNR{c[$1]++;next} c[$1]>1{print}' \
+    "$work/08a-by-size.tsv" "$work/08a-by-size.tsv" > "$work/08b-collisions.tsv"
+  _total_coll=$(wc -l < "$work/08b-collisions.tsv")
+
+  # Collapse hardlinks: same (size, inode, device) = same file, no wasted space
+  awk -F'\t' '{key=$1"\t"$2"\t"$3; if(!seen[key]++) print}' \
+    "$work/08b-collisions.tsv" > "$work/08c-deduped.tsv"
+  _hl_removed=$(( _total_coll - $(wc -l < "$work/08c-deduped.tsv") ))
+
+  # After hardlink removal, which sizes still have >1 unique file?
+  awk -F'\t' 'NR==FNR{c[$1]++;next} c[$1]>1{print}' \
+    "$work/08c-deduped.tsv" "$work/08c-deduped.tsv" > "$work/08d-real-collisions.tsv"
+  _to_hash=$(wc -l < "$work/08d-real-collisions.tsv")
+
+  note "    Phase B: ${_total_coll} size-collision files, ${_hl_removed} already hardlinked, ${_to_hash} to process"
+
+  # Split by extension: hash-worthy vs size-only
+  if [ "$ALL_EXTENSIONS" -eq 1 ]; then
+    cp "$work/08d-real-collisions.tsv" "$work/08e-hash.tsv"
+    > "$work/08e-sizeonly.tsv"
+  else
+    > "$work/08e-hash.tsv"
+    > "$work/08e-sizeonly.tsv"
+    awk -F'\t' -v al="$_EXT_ALLOWLIST" \
+      -v hf="$work/08e-hash.tsv" -v sf="$work/08e-sizeonly.tsv" '
+    BEGIN {
+      n=split(al,a," ")
+      for(i=1;i<=n;i++) ok[a[i]]=1
+    }
+    function get_ext(path,    ext,ext2,pe) {
+      ext=path; sub(/^.*\./,"",ext); ext=tolower(ext)
+      if(ext==path) return ""
+      if(ext=="gz"||ext=="bz2"||ext=="xz"||ext=="zst") {
+        pe=path; sub(/\.[^.]+$/,"",pe); sub(/^.*\./,"",pe)
+        if(tolower(pe)=="tar") return "tar."ext
+      }
+      return ext
+    }
+    { ext=get_ext($4); if(ext in ok) print >> hf; else print >> sf }
+    ' "$work/08d-real-collisions.tsv"
+  fi
+
+  note "    Phase C: sha256 hashing $(wc -l < "$work/08e-hash.tsv") files"
+  {
+    printf "=== Section 1: SHA-256-confirmed duplicates (media + archive + image extensions) ===\n"
+    awk -F'\t' '{print $4}' "$work/08e-hash.tsv" \
+      | while IFS= read -r f; do
+          [ -f "$f" ] || continue
+          sha=$(sha256sum "$f" 2>/dev/null | awk '{print $1}')
+          sz=$(stat -c%s "$f" 2>/dev/null)
+          printf '%s\t%s\t%s\n' "$sha" "$sz" "$f"
+        done | sort \
+      | awk -F'\t' -v wdir="$work" '
+          function flush() {
+            if (n>1) {
+              total += sz*(n-1)
+              printf "\n=== %d copies, %.2f GiB each ===\n", n, sz/1073741824
+              for(i=0;i<n;i++) print "  " p[i]
+            }
+          }
+          BEGIN{ prev=""; n=0; total=0 }
+          prev!=$1{ flush(); prev=$1; sz=$2; n=0 }
+          { p[n++]=$3 }
+          END{ flush(); printf "\n# Reclaimable (bytes): %d\n", total; printf "%d\n", total > (wdir "/08-reclaimable.tmp") }'
+
+    printf "\n=== Section 2: Size-only collisions (other extensions, not sha256-verified) ===\n"
+    awk -F'\t' 'NR==FNR{c[$1]++;next} c[$1]>1{print}' \
+      "$work/08e-sizeonly.tsv" "$work/08e-sizeonly.tsv" 2>/dev/null \
+      | awk -F'\t' '{printf "%10.2f GiB  %s\n", $1/1073741824, $4}'
+  } > "$work/08-duplicates.txt"
+
+  _json_dup_reclaimable=$(cat "$work/08-reclaimable.tmp" 2>/dev/null || echo 0)
+  _json_dup_pairs=$(grep -c "^=== [0-9]* copies" "$work/08-duplicates.txt" 2>/dev/null || echo 0)
+  note "  -> 08-duplicates.txt"
+  phase_end
+fi
+
+# ============================================================
+# Phase 9 — Cache-pool deep stats (BTRFS / ZFS)
+# ============================================================
+phase_start "9" "pools" "9. Cache-pool deep stats"
+{
+  echo "### btrfs filesystem usage (per pool)"
+  for m in /mnt/cache* /mnt/pool*; do
+    [ -d "$m" ] || continue
+    if mountpoint -q "$m" && stat -f -c %T "$m" 2>/dev/null | grep -qi btrfs; then
+      echo "--- $m ---"
+      btrfs filesystem usage "$m" 2>&1
+    fi
+  done
+  echo
+  echo "### zpool list / status"
+  zpool list 2>/dev/null
+  echo
+  zpool status -v 2>/dev/null
+  echo
+  echo "### zfs list -o name,used,avail,refer,mountpoint,compression,compressratio"
+  zfs list -o name,used,avail,refer,mountpoint,compression,compressratio 2>/dev/null
+} > "$work/09-pools.txt"
+note "  -> 09-pools.txt"
+phase_end
+
+# ============================================================
+# Phase 10 — Docker with collapsed anonymous volumes
+# ============================================================
+phase_start "10" "docker" "10. Docker disk usage"
+
+# Pre-collect volume info so variables are available in the command group
+_docker_vol_anon=0
+_docker_vol_named=()
+while IFS= read -r vname; do
+  if printf '%s' "$vname" | grep -qE '^[0-9a-f]{64}$'; then
+    _docker_vol_anon=$(( _docker_vol_anon + 1 ))
+  else
+    _docker_vol_named+=("$vname")
+  fi
+done < <(docker volume ls -q 2>/dev/null)
+_json_docker_dangling=$_docker_vol_anon
+_json_docker_containers=$(docker ps -aq 2>/dev/null | wc -l || echo 0)
+_json_docker_images=$(docker images -q 2>/dev/null | wc -l || echo 0)
+
+{
+  echo "### docker system df"
+  docker system df 2>&1
+  echo
+  echo "### Container sizes (largest writable layer first)"
+  docker ps -a --size --format 'table {{.Names}}\t{{.Size}}\t{{.Image}}' 2>&1
+  echo
+  echo "### Volumes"
+  if [ "${#_docker_vol_named[@]}" -gt 0 ]; then
+    echo "Named volumes:"
+    printf '  %s\n' "${_docker_vol_named[@]}"
+    echo
+  fi
+  printf 'Anonymous local volumes: %d entries, 0 B total, 0 links each\n' "$_docker_vol_anon"
+  printf '  (run: docker volume prune  to remove unnamed volumes)\n'
+  echo
+  echo "### appdata top-level"
+  du -sh --apparent-size /mnt/user/appdata/* 2>/dev/null | sort -rh
+} > "$work/10-docker.txt"
+note "  -> 10-docker.txt"
+phase_end
+
+# ============================================================
+# Phase 11 — VM image inventory
+# ============================================================
+phase_start "11" "vm_images" "11. VM image inventory"
+{
+  echo "### qcow2 / img / iso / vmdk under /mnt/user/domains and /mnt/user/isos"
+  for d in /mnt/user/domains /mnt/user/isos; do
+    [ -d "$d" ] || continue
+    echo "--- $d ---"
+    find "$d" -xdev -type f \( -name '*.img' -o -name '*.qcow2' -o -name '*.iso' -o -name '*.vmdk' \) \
+      -printf '%s\t%p\n' 2>/dev/null | sort -rn \
+      | awk -F'\t' '{ printf "%10.2f GiB  %s\n", $1/1073741824, $2 }'
+  done
+} > "$work/11-vm-images.txt"
+note "  -> 11-vm-images.txt"
+phase_end
+
+# ============================================================
+# Phase 12 — Trash / Recycle Bin / lost+found / @eaDir
+# ============================================================
+phase_start "12" "trash" "12. Trash / Recycle Bin / lost+found"
+{
+  echo "### Common trash locations and their sizes"
+  # /mnt itself spans many separately-mounted filesystems (user, diskN, cache,
+  # pool), so a single -xdev find rooted there can never descend into any of
+  # them. Anchor per-mountpoint instead, same as phase 2/14.
+  for m in /mnt/user /mnt/disk* /mnt/cache* /mnt/pool*; do
+    [ -d "$m" ] || continue
+    for n in '.Recycle.Bin' '.recycle' '.Trash' '.Trashes' '.Trash-1000' \
+              'lost+found' '@Recycle' '@eaDir' '#recycle'; do
+      find "$m" -xdev -type d -name "$n" 2>/dev/null | while read -r p; do
+        sz=$(du -sh --apparent-size "$p" 2>/dev/null | awk '{print $1}')
+        echo "$sz  $p"
+      done
+    done
+  done
+} > "$work/12-trash.txt"
+note "  -> 12-trash.txt"
+phase_end
+
+# ============================================================
+# Phase 13 — Log files > 50 MB
+# ============================================================
+phase_start "13" "logs" "13. Log files > 50 MB"
+{
+  echo "### /var/log"
+  du -sh --apparent-size /var/log/* 2>/dev/null | sort -rh | head -20
+  echo
+  echo "### *.log > 50 MB anywhere on the array"
+  find /mnt/user -xdev -type f -name '*.log' -size +50M -printf '%s\t%p\n' 2>/dev/null \
+    | sort -rn | head -50 \
+    | awk -F'\t' '{ printf "%10.2f MiB  %s\n", $1/1048576, $2 }'
+} > "$work/13-logs.txt"
+note "  -> 13-logs.txt"
+phase_end
+
+# ============================================================
+# Phase 14 — Snapshots
+# ============================================================
+phase_start "14" "snapshots" "14. Snapshots"
+{
+  echo "### btrfs subvolumes"
+  for m in /mnt/cache* /mnt/pool* /mnt/disk*; do
+    [ -d "$m" ] || continue
+    if mountpoint -q "$m" && stat -f -c %T "$m" 2>/dev/null | grep -qi btrfs; then
+      echo "--- $m ---"
+      btrfs subvolume list -t "$m" 2>/dev/null
+    fi
+  done
+  echo
+  echo "### zfs snapshots"
+  zfs list -t snapshot 2>/dev/null
+} > "$work/14-snapshots.txt"
+note "  -> 14-snapshots.txt"
+phase_end
+
+# ============================================================
+# summary.json  (emitted BEFORE the rm and tarball)
+# ============================================================
+_run_elapsed=$(( $(date +%s) - _run_start ))
+_err_lines=$(wc -l < "$ERR_LOG" 2>/dev/null || echo 0)
+
+note ""
+note "--- Emitting summary.json ---"
+{
+  printf '{\n'
+  printf '  "host": "%s",\n'           "$host"
+  printf '  "stamp": "%s",\n'          "$stamp"
+  printf '  "runtime_seconds": %d,\n'  "$_run_elapsed"
+  printf '  "script_version": "%s",\n' "$SCRIPT_VERSION"
+  printf '  "preflight": { "passed": %s, "warnings": %d },\n' "$_pf_passed" "$_pf_warnings"
+  printf '  "shares": {'
+  _first=1
+  for sn in "${!_share_sz[@]}"; do
+    [ "$_first" -eq 0 ] && printf ','
+    printf '\n    "%s": { "size_bytes": %d, "files_under_1mo": %d }' \
+      "$sn" "${_share_sz[$sn]:-0}" "${_share_1mo[$sn]:-0}"
+    _first=0
+  done
+  printf '\n  },\n'
+  # Sanitise path: replace " with '
+  _lpath="${_json_largest_path//\"/\'}"
+  printf '  "largest_file_bytes": %d,\n'  "${_json_largest_bytes:-0}"
+  printf '  "largest_file_path": "%s",\n' "$_lpath"
+  printf '  "duplicates": { "pairs": %d, "reclaimable_bytes": %d },\n' \
+    "${_json_dup_pairs:-0}" "${_json_dup_reclaimable:-0}"
+  printf '  "docker": { "containers": %d, "images": %d, "dangling_volumes": %d },\n' \
+    "${_json_docker_containers:-0}" "${_json_docker_images:-0}" "${_json_docker_dangling:-0}"
+  printf '  "errors_log_lines": %d\n'  "${_err_lines:-0}"
+  printf '}\n'
+} > "$work/summary.json"
+
+if command -v python3 &>/dev/null; then
+  if ! python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$work/summary.json" 2>/dev/null; then
+    note "  [WARN] summary.json failed JSON validation — may be malformed"
+  else
+    note "  -> summary.json (validated OK)"
+  fi
+else
+  note "  -> summary.json (python3 not available — not validated)"
+fi
+
+# ============================================================
+# Phase 15 — Single rm of intermediates + pack tarball
+# ============================================================
+phase_start "15" "pack_tarball" "15. Packing tarball"
+
+# Single cleanup of ALL intermediate working files before packing
+rm -f "$work"/08[abcde]-*.tsv "$work/05-raw.tsv" "$work/05b-dl-sizes.tmp" "$work/05b-hint.tmp" "$work/08-reclaimable.tmp"
+
+tar_path="$out_root/storage-scan-${host}-${stamp}.tar.gz"
+tar -C "$out_root" -czf "$tar_path" "$(basename "$work")"
+
+# Mirror into the script's own output/ folder on the flash so the
+# WebUI's User Scripts page can surface / download it directly.
+mkdir -p "$script_dir/output"
+cp -f "$tar_path" "$script_dir/output/" 2>/dev/null || true
+
+# Best-effort sync so the file is on disk before we report success
+sync
+phase_end
+
+# ============================================================
+# Final summary with reclaim estimate
+# ============================================================
+_run_elapsed=$(( $(date +%s) - _run_start ))
+_run_mins=$(( _run_elapsed / 60 ))
+_run_secs=$(( _run_elapsed % 60 ))
+_err_lines=$(wc -l < "$ERR_LOG" 2>/dev/null || echo 0)
+
+# Reclaim estimate
+_dockerimg_bytes=0
+for _dpath in /mnt/user/system/docker/docker.img /var/lib/docker.img; do
+  [ -f "$_dpath" ] && _dockerimg_bytes=$(stat -c%s "$_dpath" 2>/dev/null || echo 0) && break
+done
+_dockerimg_gib=$(awk "BEGIN{printf \"%.1f\", ${_dockerimg_bytes}/1073741824}")
+_dup_gib=$(awk "BEGIN{printf \"%.1f\", ${_json_dup_reclaimable:-0}/1073741824}")
+_total_gib=$(awk "BEGIN{printf \"%.1f\", (${_dockerimg_bytes}+${_json_dup_reclaimable:-0})/1073741824}")
+
+share_name=$(echo "$out_root" | sed -n 's|^/mnt/user/\([^/]*\).*|\1|p')
+smb_path="\\\\${host}\\${share_name}\\DeepScanScriptClaude\\$(basename "$tar_path")"
+
+note ""
+note "=================================================================="
+note " DONE."
+note ""
+note "  Total runtime : ${_run_mins}m ${_run_secs}s"
+note "  Tarball       : $tar_path"
+note "  Size          : $(du -h "$tar_path" 2>/dev/null | awk '{print $1}')"
+note "  Mirror        : $script_dir/output/$(basename "$tar_path")"
+note ""
+note "  Reclaim estimate (rough): ${_dockerimg_gib} GiB docker.img + ${_dup_gib} GiB duplicates = ~${_total_gib} GiB"
+note ""
+note "  Run log       : $LOG"
+note "  Error log     : $ERR_LOG  (${_err_lines} lines)"
+if [ "$_err_lines" -gt 0 ]; then
+  note "  ** ${_err_lines} line(s) in _errors.log — review for failures or inefficiencies"
+fi
+note ""
+note "  Reach over SMB:"
+note "    $smb_path"
+note ""
+note "  Or copy via SSH/SCP:"
+note "    scp root@${host}:'$tar_path' ."
+note ""
+note "  Upload the tarball back to the chat for analysis."
+note "=================================================================="
