@@ -1,0 +1,12 @@
+# OS / editor cruft
+Thumbs.db
+Desktop.ini
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Scan output / logs (script is the deliverable; its output is not)
+*.log
+out/
+output/
