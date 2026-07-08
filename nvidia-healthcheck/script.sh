@@ -11,18 +11,33 @@
 LOGFILE="/var/log/nvidia-healthcheck.log"
 TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
 
-SMI_OUTPUT=$(nvidia-smi 2>&1)
+# Wrap Unraid's notify helper so both failure paths stay one line each.
+alert() {
+  /usr/local/emhttp/webGui/scripts/notify \
+    -e "Nvidia Driver Check" -s "$1" -d "$2" -i "alert"
+}
+
+# nvidia-smi missing entirely means the Nvidia-Driver plugin isn't
+# installed (or isn't on PATH) — a different problem than a driver that
+# is present but not responding, so give it its own message.
+if ! command -v nvidia-smi &>/dev/null; then
+  echo "$TIMESTAMP - FAILED: nvidia-smi not found" >> "$LOGFILE"
+  alert "nvidia-smi not found" \
+    "nvidia-smi is not on PATH — is the Nvidia-Driver plugin installed? GPU-dependent containers (e.g. Plex hardware transcoding) won't work."
+  exit 1
+fi
+
+# A wedged driver can make nvidia-smi hang indefinitely — exactly the
+# state this check exists to catch. Cap it with timeout (ships with
+# Unraid's coreutils) so the check can never hang the User Scripts job.
+# A timeout exits 124, which is non-zero, so it still fires the alert.
+SMI_OUTPUT=$(timeout 30 nvidia-smi 2>&1)
 SMI_EXIT=$?
 
-if [ $SMI_EXIT -ne 0 ]; then
-  echo "$TIMESTAMP - FAILED: $SMI_OUTPUT" >> "$LOGFILE"
-
-  /usr/local/emhttp/webGui/scripts/notify \
-    -e "Nvidia Driver Check" \
-    -s "GPU driver not loaded" \
-    -d "nvidia-smi failed — GPU-dependent containers (e.g. Plex hardware transcoding) won't work until this is fixed. Error: ${SMI_OUTPUT}" \
-    -i "alert"
-
+if [ "$SMI_EXIT" -ne 0 ]; then
+  echo "$TIMESTAMP - FAILED (exit $SMI_EXIT): $SMI_OUTPUT" >> "$LOGFILE"
+  alert "GPU driver not loaded" \
+    "nvidia-smi failed (exit $SMI_EXIT) — GPU-dependent containers (e.g. Plex hardware transcoding) won't work until this is fixed. Error: ${SMI_OUTPUT}"
   exit 1
 else
   echo "$TIMESTAMP - OK: driver loaded" >> "$LOGFILE"
