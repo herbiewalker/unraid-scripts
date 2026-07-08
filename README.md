@@ -28,13 +28,7 @@ Deep-scans `/mnt/user` — top dirs and files, age histogram, duplicate finder, 
 
 ### [`nvidia-healthcheck/`](nvidia-healthcheck) — GPU driver watchdog
 
-Checks whether the Nvidia GPU driver is loaded and communicating (`nvidia-smi`) and fires an Unraid notification if it isn't. Catches the case where the Nvidia-Driver plugin (ich777) silently fails to rebind its kernel module after an Unraid OS update, which otherwise shows up as GPU-dependent containers (e.g. Plex hardware transcoding) failing with an opaque error.
-
-**Install (User Scripts plugin):**
-1. Unraid webGUI → **Settings → User Scripts → Add New Script**
-2. Name it `nvidia-healthcheck`, paste in `nvidia-healthcheck/script.sh`
-3. Set schedule to **"At Startup of Array"** — optionally add a periodic cron schedule too (e.g. every 6 hours) for drift outside of reboots
-4. Notifications appear via Unraid's built-in notification system (webGUI bell icon + any configured channels under **Settings → Notifications**)
+Checks whether the Nvidia GPU driver is loaded and communicating (`nvidia-smi`) and fires an Unraid notification if it isn't — catching the case where the Nvidia-Driver plugin (ich777) silently fails to rebind its kernel module after an Unraid OS update, which otherwise shows up as GPU-dependent containers (e.g. Plex hardware transcoding) failing with an opaque error. Runs at array start; see [nvidia-healthcheck/README.md](nvidia-healthcheck/README.md) for how it works and install steps.
 
 ## License
 
