@@ -30,6 +30,12 @@ Deep-scans `/mnt/user` — top dirs and files, age histogram, duplicate finder, 
 
 Checks whether the Nvidia GPU driver is loaded and communicating (`nvidia-smi`) and fires an Unraid notification if it isn't — catching the case where the Nvidia-Driver plugin (ich777) silently fails to rebind its kernel module after an Unraid OS update, which otherwise shows up as GPU-dependent containers (e.g. Plex hardware transcoding) failing with an opaque error. Runs at array start; see [nvidia-healthcheck/README.md](nvidia-healthcheck/README.md) for how it works and install steps.
 
+### [`hardware-stress-test/`](hardware-stress-test) — CPU + RAM stress test with crash forensics
+
+Stress-tests CPU and RAM using **only what ships with Unraid** — no Nerd Tools (deprecated), no package installs, no Docker. Three phases: CPU (AES-NI + SHA-512), RAM write/verify (a checksum mismatch means a bit flipped — a hardware fault), then both together.
+
+The point isn't the pass/fail. Unraid's syslog lives in tmpfs, so a hard lockup destroys its own evidence. This script writes a **heartbeat every 15s to the flash drive** (`sync`'d immediately) and to syslog — so if the box freezes solid, you reboot and the last line tells you the phase, the elapsed time, and the temperature at death. Runs natively rather than in a container, deliberately, so that a crash doesn't leave you unable to tell the CPU from the container runtime. **Stop the array before running** — the test doesn't need it, and an unclean shutdown with the array stopped is harmless. See [hardware-stress-test/README.md](hardware-stress-test/README.md).
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
