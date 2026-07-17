@@ -32,9 +32,9 @@ Checks whether the Nvidia GPU driver is loaded and communicating (`nvidia-smi`) 
 
 ### [`hardware-stress-test/`](hardware-stress-test) — CPU + RAM stress test with crash forensics
 
-Stress-tests CPU and RAM using **only what ships with Unraid** — no Nerd Tools (deprecated), no package installs, no Docker. Three phases: CPU (AES-NI + SHA-512), RAM write/verify (a checksum mismatch means a bit flipped — a hardware fault), then both together.
+Stress-tests CPU and RAM using **only what ships with Unraid** — no Nerd Tools (deprecated), no package installs, no Docker (it uses `stress-ng` only if you already have it). Three phases: CPU, RAM write/verify, then both together, in Quick / Standard / Burn-in profiles.
 
-The point isn't the pass/fail. Unraid's syslog lives in tmpfs, so a hard lockup destroys its own evidence. This script writes a **heartbeat every 15s to the flash drive** (`sync`'d immediately) and to syslog — so if the box freezes solid, you reboot and the last line tells you the phase, the elapsed time, and the temperature at death. Runs natively rather than in a container, deliberately, so that a crash doesn't leave you unable to tell the CPU from the container runtime. **Stop the array before running** — the test doesn't need it, and an unclean shutdown with the array stopped is harmless. See [hardware-stress-test/README.md](hardware-stress-test/README.md).
+The point isn't the pass/fail — the load only provokes a fault. The evidence comes from the hardware's own counters: **live ECC/EDAC error counts** (an uncorrectable error aborts on the spot), machine-check exceptions, and thermal-throttle events, with a tmpfs checksum loop as the non-ECC fallback. Because Unraid's syslog lives in tmpfs, a hard lockup destroys its own evidence, so the script writes a **heartbeat to the flash drive** (`sync`'d immediately) and to syslog — reboot after a freeze and the last line gives you the phase, elapsed time, temperature, and ECC state at death. Run it from a terminal for an **interactive setup screen** (profiles, live preflight, runtime estimate); run it under User Scripts and it uses flags/defaults. A real thermal abort, a preflight that **refuses to start with the array running**, and cleanup on every exit path. See [hardware-stress-test/README.md](hardware-stress-test/README.md).
 
 ## License
 
