@@ -73,7 +73,7 @@ source, ECC presence, array state) and a running time estimate update as you edi
 It won't let you start while a red preflight item is unresolved.
 
 ```
-┌─ hardware-stress-test v0.2.0 ─────────────────────────────────────┐
+┌─ hardware-stress-test v0.2.1 ─────────────────────────────────────┐
 │  PROFILE    < Standard >    Quick . Standard . Burn-in . Custom   │
 │  PHASES                                                           │
 │    [x]  1  CPU only                45 min                         │
@@ -89,10 +89,18 @@ It won't let you start while a red preflight item is unresolved.
 └───────────────────────────────────────────────────────────────────┘
 ```
 
-**From Settings → User Scripts — no setup screen.** User Scripts runs the script
-with no terminal attached, so there's nowhere to draw an interactive screen (and a
-prompt there would hang the job). It uses the Standard profile, or whatever flags
-you set in the script's arguments box. Add `--yes` to skip prompts.
+**From Settings → User Scripts — hands you off to a terminal.** The setup screen
+needs a keyboard, and the User Scripts window is a one-way log pane, so the TUI
+can't run there. Click **Run** with no arguments and the script won't silently
+stress your box — it fires an **Unraid notification** and prints the exact command
+to run in a terminal for the interactive screen, then exits without doing anything.
+
+If you'd rather run it straight from User Scripts with no screen, give it a flag
+(in the script's arguments box, or appended to the command inside the script):
+
+- `--yes` → run the **Standard profile** non-interactively
+- `--preflight-only` → just check the box is ready, don't stress
+- any other flag (`--profile burn-in`, `--phases 1,3`, …) also skips the handoff
 
 Either way: **stop the array first** (see below).
 

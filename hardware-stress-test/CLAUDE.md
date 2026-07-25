@@ -4,7 +4,7 @@ CPU + RAM stress test for Unraid, built around crash forensics and the hardware'
 own error counters rather than a pass/fail score. Runs via the User Scripts plugin,
 or directly from a terminal for the interactive setup screen.
 
-Current version: **v0.2.0**
+Current version: **v0.2.1**
 
 ## Files
 
@@ -81,7 +81,13 @@ running `main`, then mock `cpu_temp`/capabilities. Note: `cpu_temp` is called vi
 - `ram_verify_loop` — background worker; reports pass/fail/status via files under
   `$STATE` (can't return values across a `&`).
 - `tui_run` / `tui_render` / `tui_adjust` — the ANSI setup screen; only entered when
-  `[ -t 0 ] && [ -t 1 ]` and `--no-tui` not set.
+  `[ -t 0 ] && [ -t 1 ]` and `--no-tui` not set. Cursor escapes (`tui_hide`/`tui_show`)
+  are `[ -t 1 ]`-guarded because `tui_show` fires from the EXIT trap on every exit.
+- `handoff_to_terminal` — when there's no TTY **and** `RAW_ARGC == 0` (a bare User
+  Scripts GUI click), print the "open a terminal" instructions + fire an Unraid
+  notification (`notify_unraid`) and exit 0 without stressing. ANY flag sets
+  `RAW_ARGC > 0` and skips the handoff, so `--yes` / `--profile` / scheduled runs
+  still work non-interactively.
 - `write_summary` — heartbeat log + `summary.json` (printf, no jq). A hardware
   error outranks a clean run for the exit code.
 

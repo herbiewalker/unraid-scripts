@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# hardware-stress-test v0.2.0 — CPU + RAM stress test with crash forensics
+# hardware-stress-test v0.2.1 — CPU + RAM stress test with crash forensics
 #
 # Part of: https://github.com/herbiewalker/unraid-scripts
 # License: MIT
@@ -75,7 +75,7 @@ set -o pipefail
 # set -e is intentionally OFF (repo convention): a phase must be able to fail
 # without killing the run, because a partial result is still evidence.
 
-SCRIPT_VERSION="0.2.0"
+SCRIPT_VERSION="0.2.1"
 
 # ============================================================
 # Defaults (the Standard profile). Override via TUI or flags.
@@ -801,8 +801,11 @@ C_RESET=$'\033[0m'; C_DIM=$'\033[2m';  C_BOLD=$'\033[1m'
 C_RED=$'\033[31m';  C_GRN=$'\033[32m'; C_YEL=$'\033[33m'
 C_CYA=$'\033[36m';  C_INV=$'\033[7m'
 
-tui_hide()  { printf '\033[?25l'; }
-tui_show()  { printf '\033[?25h'; }
+# Guard cursor escapes behind a TTY check: tui_show runs from the EXIT trap on
+# every exit, including non-interactive/User-Scripts runs, where a raw escape
+# would show as literal "[?25h" junk in the log pane.
+tui_hide()  { [ -t 1 ] && printf '\033[?25l'; return 0; }
+tui_show()  { [ -t 1 ] && printf '\033[?25h'; return 0; }
 tui_clear() { printf '\033[2J\033[H'; }
 tui_home()  { printf '\033[H'; }
 
@@ -1088,9 +1091,64 @@ interpret() {
 }
 
 # ============================================================
+# GUI -> terminal handoff
+#
+# The setup screen needs a real terminal with a keyboard. The User Scripts
+# window is a one-way log pane — it can show output but cannot take input, so
+# the TUI can never render there. When we're launched from the GUI (no TTY)
+# with no arguments, don't silently run the Standard defaults: fire an Unraid
+# notification and print the exact command so the user can switch to a terminal.
+# Passing ANY flag (e.g. --yes, --preflight-only, --profile) means "I mean it,
+# run non-interactively" and skips this.
+# ============================================================
+self_path() {
+  local p="${BASH_SOURCE[0]:-$0}"
+  readlink -f "$p" 2>/dev/null || printf '%s' "$p"
+}
+
+notify_unraid() {
+  local subj="$1" desc="$2" icon="${3:-normal}"
+  [ -x /usr/local/emhttp/webGui/scripts/notify ] || return 0
+  /usr/local/emhttp/webGui/scripts/notify \
+    -e "hardware-stress-test" -s "$subj" -d "$desc" -i "$icon" 2>/dev/null
+  return 0
+}
+
+handoff_to_terminal() {
+  local self cmd
+  self=$(self_path)
+  cmd="bash $self"
+
+  printf '\n'
+  printf '  ────────────────────────────────────────────────────────────\n'
+  printf '  This tool has an interactive setup screen (profiles, live\n'
+  printf '  preflight, RAM sizing) — but the User Scripts window has no\n'
+  printf '  keyboard, so it cannot run here.\n\n'
+  printf '  To configure and run it:\n'
+  printf '    1. Stop the array\n'
+  printf '    2. Open a terminal — Unraid webGUI  >_  icon, or SSH\n'
+  printf '    3. Run:  %s\n\n' "$cmd"
+  printf '  Prefer to run it right here with no screen? Re-run this script\n'
+  printf '  with a flag:\n'
+  printf '    --yes             Standard profile, non-interactive\n'
+  printf '    --preflight-only  just check the box is ready, do not stress\n'
+  printf '    --help            all options\n'
+  printf '  (User Scripts: put the flag in the script'\''s arguments box, or\n'
+  printf '   append it to the command inside the script.)\n'
+  printf '  ────────────────────────────────────────────────────────────\n\n'
+
+  notify_unraid \
+    "Open a terminal for the interactive setup" \
+    "The stress-test setup screen needs a terminal. Stop the array, open the Unraid terminal (or SSH), and run: $cmd — or re-run from User Scripts with --yes to use the Standard profile." \
+    "normal"
+  return 0
+}
+
+# ============================================================
 # MAIN
 # ============================================================
 main() {
+  RAW_ARGC=$#
   parse_args "$@"
   detect_capabilities
 
@@ -1101,6 +1159,13 @@ main() {
       "$(hostname 2>/dev/null)" "$CORES" "$(ram_total_gb)" "$ENGINE_ACTIVE"
     print_preflight
     exit $([ "$PREFLIGHT_FATAL" = 1 ] && echo 1 || echo 0)
+  fi
+
+  # Launched from the GUI (no TTY) with no arguments? Hand off to a terminal
+  # instead of running the defaults silently. Any flag overrides this.
+  if { [ ! -t 0 ] || [ ! -t 1 ]; } && [ "${RAW_ARGC:-0}" -eq 0 ]; then
+    handoff_to_terminal
+    exit 0
   fi
 
   # No TTY (User Scripts runs us with stdout piped to a browser) means no
