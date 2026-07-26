@@ -4,7 +4,8 @@ CPU + RAM stress test for Unraid, built around crash forensics and the hardware'
 own error counters rather than a pass/fail score. Runs via the User Scripts plugin,
 or directly from a terminal for the interactive setup screen.
 
-Current version: **v0.2.1**
+Current version: **v0.2.1** · first live Unraid run 2026-07-25 (clean pass; hwmon
+temp + EDAC-absent detection + RAM loop validated — see HANDOFF).
 
 ## Files
 

@@ -55,17 +55,22 @@ runs on bare Unraid. One variable.
 | **2 — RAM verify** | 30 min | Writes a known pattern into `/dev/shm` (tmpfs = RAM), then re-checksums it in a loop. A mismatch = a bit flipped. |
 | **3 — CPU + RAM** | 45 min | Both together. Hardest on the memory controller. |
 
-Three built-in profiles: **Quick** (~16 min smoke test), **Standard** (~2 h), and
+Three built-in profiles: **Quick** (~17 min smoke test), **Standard** (~2 h), and
 **Burn-in** (~7.5 h, for new or suspect hardware). Or pick phases and durations
 individually.
 
 ## Two ways to run it
 
-**From a terminal (SSH, or the Unraid web terminal) — interactive setup screen:**
+**From a terminal (SSH, or the Unraid web terminal) — interactive setup screen.**
+Once you've added it in User Scripts, the plugin saves the file as `script` (no
+extension) under the name you gave it:
 
 ```
-bash /boot/config/plugins/user.scripts/scripts/hardware-stress-test/script.sh
+bash /boot/config/plugins/user.scripts/scripts/hardware-stress-test/script
 ```
+
+Not sure of the exact path? Click **Run** in the User Scripts GUI once — the handoff
+message prints the precise command for your install.
 
 You get an arrow-key setup screen: pick a profile, toggle phases, set the RAM size
 and abort temperature, and watch a **live preflight panel** (root, temperature
