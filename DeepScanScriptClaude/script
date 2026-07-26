@@ -1,5 +1,5 @@
 #!/bin/bash
-# DeepScanScriptClaude v0.3.2 — User Scripts plugin entry-point
+# DeepScanScriptClaude v0.3.3 — User Scripts plugin entry-point
 # ------------------------------------------------------------------------
 # Lives at: /boot/config/plugins/user.scripts/scripts/DeepScanScriptClaude/script
 # Run via:  Settings → User Scripts → DeepScanScriptClaude → "Run Script"
@@ -30,7 +30,7 @@
 set -u
 set -o pipefail
 
-SCRIPT_VERSION="0.3.2"
+SCRIPT_VERSION="0.3.3"
 
 QUICK=0
 ALL_EXTENSIONS=0
@@ -42,6 +42,10 @@ for _arg in "$@"; do
       printf 'Usage: script [--quick] [--all-extensions] [--help]\n'
       printf '  --quick           Skip phases 6 (age histogram) and 8 (duplicates)\n'
       printf '  --all-extensions  Hash ALL extensions in duplicate finder (default: media+archive only)\n'
+      printf '\n'
+      printf 'Run from a terminal (SSH / Unraid web terminal) with no flags for an\n'
+      printf 'interactive setup screen. Under User Scripts (no TTY) it runs with the\n'
+      printf 'flags above and fires an Unraid notification when the scan completes.\n'
       exit 0 ;;
     *) printf 'Unknown flag: %s\n' "$_arg" >&2; exit 2 ;;
   esac
@@ -65,6 +69,144 @@ choose_outroot() {
   # Last resort: flash drive (small, but always writable)
   echo "$script_dir"
 }
+
+# ============================================================
+# Unraid notification helper (best-effort; no-op off Unraid)
+# ============================================================
+notify_unraid() {
+  local subj="$1" desc="$2" icon="${3:-normal}"
+  [ -x /usr/local/emhttp/webGui/scripts/notify ] || return 0
+  /usr/local/emhttp/webGui/scripts/notify \
+    -e "DeepScanScriptClaude" -s "$subj" -d "$desc" -i "$icon" 2>/dev/null
+  return 0
+}
+
+# ============================================================
+# Interactive setup screen (ANSI TUI)
+#
+# Only shown from a real terminal (SSH / Unraid web terminal). Under User
+# Scripts there is no TTY, so it's skipped and the scan runs with defaults
+# or whatever flags were passed. Same look as hardware-stress-test.
+#
+# It runs BEFORE the work dir / log exist, so a cancel just exits — nothing to
+# clean up, and the script's single-rm invariant stays intact.
+#
+# Padding is measured from a plain-ASCII "stencil" string, never the coloured/
+# unicode one (${#s} counts bytes). Every stencil must be the same VISUAL width
+# as the string it stands in for.
+# ============================================================
+DS_W=67
+DS_RESET=$'\033[0m'; DS_DIM=$'\033[2m'; DS_BOLD=$'\033[1m'
+DS_GRN=$'\033[32m'; DS_YEL=$'\033[33m'; DS_INV=$'\033[7m'
+
+ds_hide()  { [ -t 1 ] && printf '\033[?25l'; return 0; }
+ds_show()  { [ -t 1 ] && printf '\033[?25h'; return 0; }
+ds_clear() { printf '\033[2J\033[H'; }
+ds_home()  { printf '\033[H'; }
+
+ds_row()  { local pad=$(( DS_W - ${#1} )); [ "$pad" -lt 0 ] && pad=0; printf '│%s%*s│\n' "$1" "$pad" ""; }
+ds_rowc() {
+  local stencil="$1" colored="$2"
+  local pad=$(( DS_W - ${#stencil} )); [ "$pad" -lt 0 ] && pad=0
+  printf '│%s%*s│\n' "$colored" "$pad" ""
+}
+ds_rule()   { printf '├'; local i=0; while [ $i -lt $DS_W ]; do printf '─'; i=$((i+1)); done; printf '┤\n'; }
+ds_rule_t() { printf '┌'; local i=0; while [ $i -lt $DS_W ]; do printf '─'; i=$((i+1)); done; printf '┐\n'; }
+ds_rule_b() { printf '└'; local i=0; while [ $i -lt $DS_W ]; do printf '─'; i=$((i+1)); done; printf '┘\n'; }
+ds_clip()   { local s="$1" n="$2"; [ "${#s}" -gt "$n" ] && printf '%s' "${s:0:n}" || printf '%s' "$s"; }
+
+DS_FIELDS=(mode allext)
+DS_CUR=0
+
+ds_key() {
+  local k rest
+  IFS= read -rsn1 k 2>/dev/null || { printf 'quit'; return; }
+  case "$k" in
+    $'\033')
+      read -rsn2 -t 0.05 rest 2>/dev/null
+      case "${rest:-}" in
+        '[A') printf 'up' ;;   '[B') printf 'down' ;;
+        '[C') printf 'right' ;; '[D') printf 'left' ;;
+        *)    printf 'esc' ;;
+      esac ;;
+    '')  printf 'enter' ;;
+    *)   printf '%s' "$k" ;;
+  esac
+}
+
+ds_sel() { [ "${DS_FIELDS[$DS_CUR]}" = "$1" ] && printf '%s' "$DS_INV" || printf ''; }
+
+ds_render() {
+  ds_home
+  local base oroot free_gib fkb mode_disp mode_note ext_disp ext_note est
+  base=$(choose_outroot)
+  oroot="$base/DeepScanScriptClaude"
+  fkb=$(df -Pk "$base" 2>/dev/null | awk 'NR==2{print $4}')
+  if [ -n "${fkb:-}" ]; then free_gib="$(( fkb / 1024 / 1024 )) GiB free"; else free_gib="unknown"; fi
+  if [ "$QUICK" = 1 ]; then
+    mode_disp="Quick"; mode_note="skips phase 6 (age) + 8 (duplicates)"; est="~1-5 min"
+  else
+    mode_disp="Full"; mode_note="all 16 phases"; est="~5-60 min (depends on array size)"
+  fi
+  if [ "$ALL_EXTENSIONS" = 1 ]; then
+    ext_disp="on";  ext_note="hash EVERY extension in the dup finder"
+  else
+    ext_disp="off"; ext_note="hash media + archive only (faster)"
+  fi
+  mode_note=$(ds_clip "$mode_note" 47); ext_note=$(ds_clip "$ext_note" 47)
+
+  ds_rule_t
+  ds_row ""
+  ds_rowc "  MODE            < $(printf '%-6s' "$mode_disp") >   Quick . Full" \
+          "  ${DS_BOLD}MODE${DS_RESET}            $(ds_sel mode)< $(printf '%-6s' "$mode_disp") >${DS_RESET}   ${DS_DIM}Quick . Full${DS_RESET}"
+  ds_rowc "                  $mode_note" "                  ${DS_DIM}${mode_note}${DS_RESET}"
+  ds_row ""
+  ds_rowc "  All extensions  < $(printf '%-3s' "$ext_disp") >" \
+          "  All extensions  $(ds_sel allext)< $(printf '%-3s' "$ext_disp") >${DS_RESET}"
+  ds_rowc "                  $ext_note" "                  ${DS_DIM}${ext_note}${DS_RESET}"
+  ds_row ""
+  ds_rule
+  ds_rowc " SCAN" " ${DS_BOLD}SCAN${DS_RESET}"
+  ds_rowc "  Host          $(ds_clip "$host" 51)" "  Host          $(ds_clip "$host" 51)"
+  ds_rowc "  Output        $(ds_clip "$oroot" 51)" "  Output        $(ds_clip "$oroot" 51)"
+  ds_rowc "  Free space    $free_gib" "  Free space    ${free_gib}"
+  ds_rowc "  Est. runtime  $est" "  Est. runtime  ${est}"
+  ds_rule
+  ds_rowc "  up/dn move   l/r change   ENTER start   q quit" \
+          "  ${DS_DIM}up/dn move   l/r change   ENTER start   q quit${DS_RESET}"
+  ds_rule_b
+}
+
+ds_adjust() {
+  case "$1" in
+    mode)   QUICK=$((1 - QUICK)) ;;
+    allext) ALL_EXTENSIONS=$((1 - ALL_EXTENSIONS)) ;;
+  esac
+}
+
+deepscan_tui() {
+  local k f
+  trap 'ds_show; printf "\n"; exit 130' INT
+  ds_hide; ds_clear
+  while :; do
+    ds_render
+    k=$(ds_key)
+    f="${DS_FIELDS[$DS_CUR]}"
+    case "$k" in
+      up)         DS_CUR=$(( (DS_CUR - 1 + ${#DS_FIELDS[@]}) % ${#DS_FIELDS[@]} )) ;;
+      down)       DS_CUR=$(( (DS_CUR + 1) % ${#DS_FIELDS[@]} )) ;;
+      left|right) ds_adjust "$f" ;;
+      q|Q|esc|quit) ds_show; ds_clear; printf 'Cancelled.\n'; exit 0 ;;
+      enter)      ds_show; ds_clear; trap - INT; return 0 ;;
+    esac
+  done
+}
+
+# Interactive setup screen — only from a real terminal. Under User Scripts
+# (no TTY) this is skipped and the scan runs with defaults / passed flags.
+if [ -t 0 ] && [ -t 1 ]; then
+  deepscan_tui
+fi
 
 out_root=$(choose_outroot)/DeepScanScriptClaude
 mkdir -p "$out_root"
@@ -908,3 +1050,16 @@ note "    scp root@${host}:'$tar_path' ."
 note ""
 note "  Upload the tarball back to the chat for analysis."
 note "=================================================================="
+
+# Fire an Unraid notification so a background / User-Scripts-GUI run surfaces
+# its result without anyone watching the log pane. Best-effort; no-op off Unraid.
+_tar_size=$(du -h "$tar_path" 2>/dev/null | awk '{print $1}')
+if [ "$_err_lines" -gt 0 ]; then
+  notify_unraid "Storage scan complete — ${_err_lines} error-log line(s)" \
+    "$(basename "$tar_path") (${_tar_size}) · ~${_total_gib} GiB reclaimable · on ${host}: ${tar_path}" \
+    "warning"
+else
+  notify_unraid "Storage scan complete" \
+    "$(basename "$tar_path") (${_tar_size}) · ~${_total_gib} GiB reclaimable · on ${host}: ${tar_path}" \
+    "normal"
+fi

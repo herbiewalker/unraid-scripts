@@ -2,7 +2,7 @@
 
 Read-only deep-scan bash script for a fleet of Unraid servers. Runs via the User Scripts plugin. Produces a tarball of storage-usage artifacts for file-level "where is my space going" analysis.
 
-Current version: **v0.3.2** (910 lines)
+Current version: **v0.3.3** (~1030 lines)
 
 ## Files
 
@@ -32,7 +32,7 @@ Deploy path: `/boot/config/plugins/user.scripts/scripts/DeepScanScriptClaude/scr
    ```
    grep -nE '^[[:space:]]*(rm|mv|dd)\b' script
    ```
-   Must return exactly one match.
+   Must return exactly one match. **The TUI runs BEFORE `$work`/`$LOG` are created** for exactly this reason — a cancel just `exit`s with nothing to clean up, so it never needs a second `rm`.
 
 2. **Self-contained.** Only tools that ship with Unraid base: `find`, `awk`, `sort`, `du`, `tar`, `stat`, `df`, `mount`, `free`, `uname`, `wc`, `sed`, `tr`, `date`, `hostname`, `id`, `numfmt`, `sha256sum`, `btrfs`, `zpool`, `zfs`, `docker`, `mountpoint`. No `jq`, no package installs. `numfmt` is optional — `human()` falls back to pure awk.
 
@@ -67,6 +67,8 @@ shellcheck script                             # if installed; non-blocking
 - Phase 5 stores its full `find` walk to `05-raw.tsv`; phase 5b consumes it; the single `rm` at line 852 deletes it before the tarball.
 - `summary.json` built with `printf` (no jq); validated with `python3` if available.
 - Phase 12 loops per-mountpoint (`/mnt/user`, `/mnt/disk*`, `/mnt/cache*`, `/mnt/pool*`) before running `find -xdev` — `/mnt` itself is the parent of several separately-mounted filesystems, so a `-xdev` find rooted directly at `/mnt` can never descend into any of them. Same pattern as phase 2/14.
+- `deepscan_tui` / `ds_render` / `ds_key` / `ds_adjust` (v0.3.3) — ANSI setup screen, only entered when `[ -t 0 ] && [ -t 1 ]`. Sets `QUICK` / `ALL_EXTENSIONS`; no new deps (`read`/`printf`/`df`/`awk`). Same stencil-width discipline as hardware-stress-test (`DS_W=67`; measure padding from the plain-ASCII stencil, never the coloured string). Cursor escapes `[ -t 1 ]`-guarded; scoped `trap … INT` cleared on ENTER.
+- `notify_unraid` (v0.3.3) — best-effort `/usr/local/emhttp/webGui/scripts/notify` wrapper. Fires a **completion notification** (tarball name/size/reclaim) at the very end, for both GUI and terminal runs. Not a write to shares — doesn't affect the read-only invariant.
 
 ## Known inefficiencies (not yet fixed, low priority)
 

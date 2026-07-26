@@ -24,7 +24,7 @@ Personal collection of [User Scripts plugin](https://forums.unraid.net/topic/475
 
 ### [`DeepScanScriptClaude/`](DeepScanScriptClaude) — read-only fleet storage-scan
 
-Deep-scans `/mnt/user` — top dirs and files, age histogram, duplicate finder, BTRFS/ZFS pool stats, Docker/VM disk usage, trash locations, oversized logs — and packages everything into one tarball for file-level "where is my space going" analysis. 16 phases, `--quick` mode, JSON summary. See [DeepScanScriptClaude/README.md](DeepScanScriptClaude/README.md) for the full phase table and [README-install.md](DeepScanScriptClaude/README-install.md) to install.
+Deep-scans `/mnt/user` — top dirs and files, age histogram, duplicate finder, BTRFS/ZFS pool stats, Docker/VM disk usage, trash locations, oversized logs — and packages everything into one tarball for file-level "where is my space going" analysis. 16 phases, `--quick` mode, JSON summary. Run it from a terminal for an **interactive setup screen** (Quick/Full, all-extensions toggle) or from the User Scripts GUI, which fires an **Unraid notification with the tarball location** when the scan completes. See [DeepScanScriptClaude/README.md](DeepScanScriptClaude/README.md) for the full phase table and [README-install.md](DeepScanScriptClaude/README-install.md) to install.
 
 ### [`nvidia-healthcheck/`](nvidia-healthcheck) — GPU driver watchdog
 

@@ -1,7 +1,10 @@
-# DeepScanScriptClaude v0.3.2 — install for User Scripts
+# DeepScanScriptClaude v0.3.3 — install for User Scripts
 
 Read-only deep scan of `/mnt/user`. Designed to run from the Unraid User Scripts plugin.
-Output is saved to a user-share so it's reachable via SMB.
+Output is saved to a user-share so it's reachable via SMB. When the scan finishes it
+fires an **Unraid notification** with the tarball location. Run it instead from a
+terminal (SSH / web terminal) with no flags to get an interactive setup screen — see
+the main [README.md](README.md#two-ways-to-run-it).
 
 ## What this folder contains
 

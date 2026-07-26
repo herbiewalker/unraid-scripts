@@ -7,7 +7,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](../LICENSE)
 [![Shell](https://img.shields.io/badge/Shell-Bash-4EAA25?logo=gnubash&logoColor=white)](script)
 [![Platform](https://img.shields.io/badge/Unraid-7.2%2B-e8a33d?logo=unraid&logoColor=white)](#installing)
-[![Release](https://img.shields.io/badge/release-v0.3.2-success)](script)
+[![Release](https://img.shields.io/badge/release-v0.3.3-success)](script)
 [![Writes](https://img.shields.io/badge/writes-none-critical)](#design-constraints)
 
 Drops into the Unraid **User Scripts** plugin, walks `/mnt/user`, and packs 16 phases of storage-usage detail into a single tarball you can hand off for analysis — largest files, duplicates, file-age histogram, BTRFS/ZFS/Docker/VM stats, trash locations, oversized logs.
@@ -53,6 +53,42 @@ See [README-install.md](README-install.md) for full end-user steps. The short ve
 1. Copy this folder to `/boot/config/plugins/user.scripts/scripts/DeepScanScriptClaude/`
 2. Unraid webGUI → **Settings → User Scripts** → refresh → **DeepScanScriptClaude** → **Run Script** (or **Run in Background** for large arrays)
 3. Optional flags in the **Arguments** field: `--quick` (skip phases 6+8), `--all-extensions` (hash every file type in the duplicate finder), `--help`
+
+### Two ways to run it
+
+**From the User Scripts GUI** — click **Run** and it scans with the defaults (or
+whatever flags you put in the Arguments field). When the scan finishes it fires an
+**Unraid notification** with the tarball name, size, and rough reclaim estimate, so a
+long background run surfaces its result without you watching the log pane.
+
+**From a terminal (SSH / Unraid web terminal)** — run it with no flags for an
+interactive **setup screen**: arrow keys to pick Quick vs Full and toggle the
+all-extensions duplicate hashing, with the host, output location, free space, and a
+runtime estimate shown live.
+
+```
+bash /boot/config/plugins/user.scripts/scripts/DeepScanScriptClaude/script
+```
+
+```
+┌───────────────────────────────────────────────────────────────────┐
+│  MODE            < Full   >   Quick . Full                        │
+│                  all 16 phases                                    │
+│  All extensions  < off >                                          │
+│                  hash media + archive only (faster)               │
+├───────────────────────────────────────────────────────────────────┤
+│ SCAN                                                              │
+│  Host          server-a                                           │
+│  Output        /mnt/user/appdata/DeepScanScriptClaude             │
+│  Free space    412 GiB free                                       │
+│  Est. runtime  ~5-60 min (depends on array size)                  │
+├───────────────────────────────────────────────────────────────────┤
+│  up/dn move   l/r change   ENTER start   q quit                   │
+└───────────────────────────────────────────────────────────────────┘
+```
+
+The screen only appears on a real terminal; under User Scripts (no TTY) it's skipped
+and the scan runs straight away.
 
 ### Runtime estimates
 
