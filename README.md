@@ -19,6 +19,7 @@ Personal collection of [User Scripts plugin](https://forums.unraid.net/topic/475
 - 🔒 **Read-only by construction.** Any script that touches disk enforces (via a grep-checkable invariant, documented in its own README) that it never `mv`s or `dd`s, and touches `rm` only inside its own intermediate working files — never your shares.
 - 📦 **Self-contained.** No `jq`, no package installs, no dependencies beyond what ships with Unraid base + the User Scripts plugin.
 - 🖥️ **Runs from the webGUI.** Every script here is a single file that drops straight into **Settings → User Scripts** — no SSH required to use one, just to install it.
+- 🏷️ **Fleet-attributable output.** Each script stamps its logs (and, where relevant, its JSON summary and a `00-server.txt`) with a server-identity block — hostname, machine-id, Unraid version, kernel, CPU, RAM, board, uptime — so when you run them across several boxes you always know which one a result came from. Safe set only: no hardware serials, MAC, or flash GUID.
 
 ## Scripts
 

@@ -25,6 +25,7 @@ This catches it the moment it happens, at array start, instead of finding out th
 - On any failure it appends a timestamped line to `/var/log/nvidia-healthcheck.log` **and** raises an Unraid notification (webGUI bell + whatever channels you've configured under **Settings → Notifications** — email, Discord, etc.).
 - Distinguishes two failure modes: **`nvidia-smi` not found** (the plugin isn't installed / not on PATH) versus **`nvidia-smi` present but failing** (driver loaded but not responding), so the alert tells you which.
 - Wraps the check in a **30-second `timeout`** — a wedged driver can make `nvidia-smi` hang forever, and this check should never hang the array-start job it runs from. A timeout is treated as a failure and alerts like any other.
+- **Stamps the hostname** on every log line and on the notification subject (`[hostname] …`), so across a fleet you can tell which server a result came from when logs or alerts are aggregated.
 
 Self-contained: only `nvidia-smi`, `timeout`, and Unraid's built-in `notify` helper — all present on a stock Unraid box. The script never writes anything except its own log.
 

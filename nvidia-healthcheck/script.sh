@@ -10,18 +10,22 @@
 
 LOGFILE="/var/log/nvidia-healthcheck.log"
 TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
+# Hostname stamped on every log line and notification so, on a fleet, you can
+# tell which server a result came from when logs/alerts are aggregated.
+HOST=$(hostname 2>/dev/null || echo unknown)
 
 # Wrap Unraid's notify helper so both failure paths stay one line each.
+# Subject carries the host for the same fleet-tracking reason.
 alert() {
   /usr/local/emhttp/webGui/scripts/notify \
-    -e "Nvidia Driver Check" -s "$1" -d "$2" -i "alert"
+    -e "Nvidia Driver Check" -s "[$HOST] $1" -d "$2" -i "alert"
 }
 
 # nvidia-smi missing entirely means the Nvidia-Driver plugin isn't
 # installed (or isn't on PATH) — a different problem than a driver that
 # is present but not responding, so give it its own message.
 if ! command -v nvidia-smi &>/dev/null; then
-  echo "$TIMESTAMP - FAILED: nvidia-smi not found" >> "$LOGFILE"
+  echo "$TIMESTAMP [$HOST] - FAILED: nvidia-smi not found" >> "$LOGFILE"
   alert "nvidia-smi not found" \
     "nvidia-smi is not on PATH — is the Nvidia-Driver plugin installed? GPU-dependent containers (e.g. Plex hardware transcoding) won't work."
   exit 1
@@ -35,12 +39,12 @@ SMI_OUTPUT=$(timeout 30 nvidia-smi 2>&1)
 SMI_EXIT=$?
 
 if [ "$SMI_EXIT" -ne 0 ]; then
-  echo "$TIMESTAMP - FAILED (exit $SMI_EXIT): $SMI_OUTPUT" >> "$LOGFILE"
+  echo "$TIMESTAMP [$HOST] - FAILED (exit $SMI_EXIT): $SMI_OUTPUT" >> "$LOGFILE"
   alert "GPU driver not loaded" \
     "nvidia-smi failed (exit $SMI_EXIT) — GPU-dependent containers (e.g. Plex hardware transcoding) won't work until this is fixed. Error: ${SMI_OUTPUT}"
   exit 1
 else
-  echo "$TIMESTAMP - OK: driver loaded" >> "$LOGFILE"
+  echo "$TIMESTAMP [$HOST] - OK: driver loaded" >> "$LOGFILE"
   exit 0
 fi
 
@@ -51,7 +55,7 @@ fi
 # if ! docker ps --format '{{.Names}}' | grep -q '^binhex-plexpass$'; then
 #   /usr/local/emhttp/webGui/scripts/notify \
 #     -e "Plex Container Check" \
-#     -s "binhex-plexpass not running" \
+#     -s "[$HOST] binhex-plexpass not running" \
 #     -d "Nvidia driver is fine, but the Plex container isn't up. Check manually." \
 #     -i "warning"
 # fi

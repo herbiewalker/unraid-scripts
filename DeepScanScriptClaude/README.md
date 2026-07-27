@@ -7,7 +7,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](../LICENSE)
 [![Shell](https://img.shields.io/badge/Shell-Bash-4EAA25?logo=gnubash&logoColor=white)](script)
 [![Platform](https://img.shields.io/badge/Unraid-7.2%2B-e8a33d?logo=unraid&logoColor=white)](#installing)
-[![Release](https://img.shields.io/badge/release-v0.3.3-success)](script)
+[![Release](https://img.shields.io/badge/release-v0.3.4-success)](script)
 [![Writes](https://img.shields.io/badge/writes-none-critical)](#design-constraints)
 
 Drops into the Unraid **User Scripts** plugin, walks `/mnt/user`, and packs 16 phases of storage-usage detail into a single tarball you can hand off for analysis — largest files, duplicates, file-age histogram, BTRFS/ZFS/Docker/VM stats, trash locations, oversized logs.
@@ -26,7 +26,7 @@ Drops into the Unraid **User Scripts** plugin, walks `/mnt/user`, and packs 16 p
 
 | # | Phase | Output |
 |---|---|---|
-| 0 | System overview (`df`, `mount`, `free`, share list) | `00-*.txt` |
+| 0 | System overview (`df`, `mount`, `free`, share list) + **server demographics** (host, machine-id, Unraid version, kernel, CPU, RAM, board, uptime) | `00-*.txt`, `00-server.txt` |
 | 1 | Per-share total size | `01-share-totals.txt` |
 | 2 | Per-disk top-level dirs | `02-disk-*.txt` |
 | 3 | Share × disk usage matrix | `03-share-disk-matrix.txt` |
@@ -107,7 +107,8 @@ The duplicate finder (phase 8) is the dominant cost on server-c.
 | `_run.log` | Timestamped `[HH:MM:SS]` progress — every phase start, file produced, elapsed time. What the User Scripts UI shows live. |
 | `_errors.log` | All stderr, captured via `exec 2>>`. Empty on a clean run; a non-zero line count is flagged in the final summary. |
 | `_timing.csv` | CSV of per-phase wall-clock seconds (`-1` = skipped via `--quick`). |
-| `summary.json` | Host, runtime, per-share sizes, largest file, duplicate-reclaimable bytes, Docker counts, error count. |
+| `summary.json` | Server demographics (host, machine-id, Unraid version, kernel, CPU, RAM, board, uptime), runtime, per-share sizes, largest file, duplicate-reclaimable bytes, Docker counts, error count. |
+| `00-server.txt` | Plain `key=value` server demographics — so an unpacked tarball is instantly attributable to a specific box when tracking a fleet. |
 
 Output priority: `/mnt/user/appdata` → `/mnt/user/data` → `/mnt/user/Backups` → `/mnt/user/isos` → flash fallback. A mirror copy always lands in `output/` next to the script itself, so the User Scripts page can surface it directly.
 

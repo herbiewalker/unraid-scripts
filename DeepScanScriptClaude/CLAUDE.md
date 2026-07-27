@@ -2,7 +2,7 @@
 
 Read-only deep-scan bash script for a fleet of Unraid servers. Runs via the User Scripts plugin. Produces a tarball of storage-usage artifacts for file-level "where is my space going" analysis.
 
-Current version: **v0.3.3** (~1030 lines)
+Current version: **v0.3.4** (~1080 lines)
 
 ## Files
 
@@ -69,6 +69,7 @@ shellcheck script                             # if installed; non-blocking
 - Phase 12 loops per-mountpoint (`/mnt/user`, `/mnt/disk*`, `/mnt/cache*`, `/mnt/pool*`) before running `find -xdev` — `/mnt` itself is the parent of several separately-mounted filesystems, so a `-xdev` find rooted directly at `/mnt` can never descend into any of them. Same pattern as phase 2/14.
 - `deepscan_tui` / `ds_render` / `ds_key` / `ds_adjust` (v0.3.3) — ANSI setup screen, only entered when `[ -t 0 ] && [ -t 1 ]`. Sets `QUICK` / `ALL_EXTENSIONS`; no new deps (`read`/`printf`/`df`/`awk`). Same stencil-width discipline as hardware-stress-test (`DS_W=67`; measure padding from the plain-ASCII stencil, never the coloured string). Cursor escapes `[ -t 1 ]`-guarded; scoped `trap … INT` cleared on ENTER.
 - `notify_unraid` (v0.3.3) — best-effort `/usr/local/emhttp/webGui/scripts/notify` wrapper. Fires a **completion notification** (tarball name/size/reclaim) at the very end, for both GUI and terminal runs. Not a write to shares — doesn't affect the read-only invariant.
+- `demo_collect` / `demo_report` / `demo_write_file` (v0.3.4) — server demographics (safe set: host, machine-id, unraid version, kernel, cpu+cores, ram, board, uptime, tz; no serials/MAC/flash-GUID). Sets `DEMO_*` from /proc + /sys; `demo_collect` runs in the banner, `demo_report` prints the block, `demo_write_file` writes `00-server.txt` in phase 0, and the same `DEMO_*` feed `summary.json`. For attributing a scan tarball to a box when tracking a fleet.
 
 ## Known inefficiencies (not yet fixed, low priority)
 

@@ -4,7 +4,7 @@ CPU + RAM stress test for Unraid, built around crash forensics and the hardware'
 own error counters rather than a pass/fail score. Runs via the User Scripts plugin,
 or directly from a terminal for the interactive setup screen.
 
-Current version: **v0.2.1** · first live Unraid run 2026-07-25 (clean pass; hwmon
+Current version: **v0.2.2** · first live Unraid run 2026-07-25 (clean pass; hwmon
 temp + EDAC-absent detection + RAM loop validated — see HANDOFF).
 
 ## Files
@@ -91,6 +91,12 @@ running `main`, then mock `cpu_temp`/capabilities. Note: `cpu_temp` is called vi
   still work non-interactively.
 - `write_summary` — heartbeat log + `summary.json` (printf, no jq). A hardware
   error outranks a clean run for the exit code.
+- `demo_collect` / `demo_report` (v0.2.2) — server demographics (safe set: host,
+  machine-id, unraid version, kernel, cpu+cores, ram, board, uptime, tz; no serials/
+  MAC/flash-GUID). `demo_collect` sets `DEMO_*` globals from /proc + /sys (no new
+  deps); called in `main` before the STARTING banner; `demo_report` prints the block;
+  the same `DEMO_*` feed `summary.json`. Purpose: attribute a log to a box for fleet
+  tracking.
 
 ## Exit codes
 

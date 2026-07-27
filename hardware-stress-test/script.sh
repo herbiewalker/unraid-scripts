@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# hardware-stress-test v0.2.1 — CPU + RAM stress test with crash forensics
+# hardware-stress-test v0.2.2 — CPU + RAM stress test with crash forensics
 #
 # Part of: https://github.com/herbiewalker/unraid-scripts
 # License: MIT
@@ -75,7 +75,7 @@ set -o pipefail
 # set -e is intentionally OFF (repo convention): a phase must be able to fail
 # without killing the run, because a partial result is still evidence.
 
-SCRIPT_VERSION="0.2.1"
+SCRIPT_VERSION="0.2.2"
 
 # ============================================================
 # Defaults (the Standard profile). Override via TUI or flags.
@@ -434,6 +434,47 @@ say() {
   # Force to flash NOW. This is the whole point: if the kernel dies one
   # instruction from here, this line still has to be on the drive.
   sync
+}
+
+# ============================================================
+# Server demographics — identity + specs so a log can be attributed to a
+# specific box when tracking a fleet. Safe set only: no hardware serials, no
+# MAC, no flash GUID (these logs get shared). Sets DEMO_* globals; nothing
+# here requires anything beyond /proc, /sys, and coreutils.
+# ============================================================
+DEMO_HOST=""; DEMO_MACHINE_ID=""; DEMO_UNRAID=""; DEMO_KERNEL=""
+DEMO_CPU=""; DEMO_CORES=""; DEMO_RAM=""; DEMO_BOARD=""; DEMO_UPTIME=""; DEMO_TZ=""
+demo_collect() {
+  DEMO_HOST=$(hostname 2>/dev/null || echo unknown)
+  DEMO_MACHINE_ID=$(cat /etc/machine-id 2>/dev/null || cat /var/lib/dbus/machine-id 2>/dev/null || echo n/a)
+  DEMO_UNRAID=$(sed -n 's/^version="\(.*\)".*/\1/p' /etc/unraid-version 2>/dev/null)
+  [ -n "$DEMO_UNRAID" ] || DEMO_UNRAID="not-Unraid?"
+  DEMO_KERNEL=$(uname -r 2>/dev/null || echo unknown)
+  DEMO_CPU=$(awk -F': ' '/^model name/{print $2; exit}' /proc/cpuinfo 2>/dev/null)
+  [ -n "$DEMO_CPU" ] || DEMO_CPU=$(uname -p 2>/dev/null || echo unknown)
+  DEMO_CORES=$(nproc 2>/dev/null || echo '?')
+  DEMO_RAM=$(awk '/^MemTotal:/{printf "%.0fG", $2/1048576}' /proc/meminfo 2>/dev/null)
+  local bv bn
+  bv=$(cat /sys/devices/virtual/dmi/id/board_vendor 2>/dev/null)
+  bn=$(cat /sys/devices/virtual/dmi/id/board_name 2>/dev/null)
+  DEMO_BOARD=$(printf '%s %s' "$bv" "$bn" | sed 's/^ *//;s/ *$//')
+  [ -n "$DEMO_BOARD" ] || DEMO_BOARD="unknown"
+  local up; up=$(awk '{print int($1)}' /proc/uptime 2>/dev/null)
+  if [ -n "${up:-}" ]; then
+    DEMO_UPTIME="$(( up/86400 ))d $(( (up%86400)/3600 ))h $(( (up%3600)/60 ))m"
+  else
+    DEMO_UPTIME="unknown"
+  fi
+  DEMO_TZ=$(date '+%Z %z' 2>/dev/null)
+}
+demo_report() {
+  say "  ---- server ----"
+  say "    host:       $DEMO_HOST    machine-id: $DEMO_MACHINE_ID"
+  say "    unraid:     $DEMO_UNRAID    kernel: $DEMO_KERNEL"
+  say "    cpu:        $DEMO_CPU  ($DEMO_CORES cores)"
+  say "    ram:        $DEMO_RAM    board: $DEMO_BOARD"
+  say "    uptime:     $DEMO_UPTIME    tz: $DEMO_TZ"
+  say "  ----------------"
 }
 
 # ============================================================
@@ -1019,7 +1060,13 @@ write_summary() {
 
   printf '{\n' > "$JSON"
   printf '  "version": "%s",\n'        "$SCRIPT_VERSION" >> "$JSON"
-  printf '  "host": "%s",\n'           "$(hostname 2>/dev/null)" >> "$JSON"
+  printf '  "host": "%s",\n'           "$DEMO_HOST" >> "$JSON"
+  printf '  "machine_id": "%s",\n'     "$DEMO_MACHINE_ID" >> "$JSON"
+  printf '  "unraid_version": "%s",\n' "$DEMO_UNRAID" >> "$JSON"
+  printf '  "kernel": "%s",\n'         "$DEMO_KERNEL" >> "$JSON"
+  printf '  "cpu_model": "%s",\n'      "$DEMO_CPU" >> "$JSON"
+  printf '  "board": "%s",\n'          "$DEMO_BOARD" >> "$JSON"
+  printf '  "uptime": "%s",\n'         "$DEMO_UPTIME" >> "$JSON"
   printf '  "status": "%s",\n'         "$status" >> "$JSON"
   printf '  "profile": "%s",\n'        "$PROFILE" >> "$JSON"
   printf '  "engine": "%s",\n'         "$ENGINE_ACTIVE" >> "$JSON"
@@ -1198,12 +1245,12 @@ main() {
   EDAC_UE_START=$(edac_sum ue_count)
   MCE_START=$(mce_count)
   THROTTLE_START=$(throttle_sum)
+  demo_collect
 
   say "================================================================"
   say "STRESS TEST STARTING — v$SCRIPT_VERSION"
-  say "  host:    $(hostname 2>/dev/null)"
+  demo_report
   say "  profile: $PROFILE"
-  say "  cores:   $CORES"
   say "  ram:     $(ram_total_gb)G total, testing $(effective_ram_gb)G"
   say "  engine:  $ENGINE_ACTIVE"
   say "  array:   $ARRAY_STATE"

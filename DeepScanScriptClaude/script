@@ -1,5 +1,5 @@
 #!/bin/bash
-# DeepScanScriptClaude v0.3.3 — User Scripts plugin entry-point
+# DeepScanScriptClaude v0.3.4 — User Scripts plugin entry-point
 # ------------------------------------------------------------------------
 # Lives at: /boot/config/plugins/user.scripts/scripts/DeepScanScriptClaude/script
 # Run via:  Settings → User Scripts → DeepScanScriptClaude → "Run Script"
@@ -30,7 +30,7 @@
 set -u
 set -o pipefail
 
-SCRIPT_VERSION="0.3.3"
+SCRIPT_VERSION="0.3.4"
 
 QUICK=0
 ALL_EXTENSIONS=0
@@ -226,6 +226,62 @@ exec 2>>"$ERR_LOG"
 # ============================================================
 note() { echo "[$(date +%H:%M:%S)] $*" | tee -a "$LOG"; }
 
+# ============================================================
+# Server demographics — identity + specs so a scan tarball can be attributed
+# to a specific box when tracking a fleet. Safe set only: no hardware serials,
+# no MAC, no flash GUID (the tarball gets shared). Sets DEMO_* globals.
+# ============================================================
+DEMO_HOST=""; DEMO_MACHINE_ID=""; DEMO_UNRAID=""; DEMO_KERNEL=""
+DEMO_CPU=""; DEMO_CORES=""; DEMO_RAM=""; DEMO_BOARD=""; DEMO_UPTIME=""; DEMO_TZ=""
+demo_collect() {
+  DEMO_HOST=$(hostname 2>/dev/null || echo unknown)
+  DEMO_MACHINE_ID=$(cat /etc/machine-id 2>/dev/null || cat /var/lib/dbus/machine-id 2>/dev/null || echo n/a)
+  DEMO_UNRAID=$(sed -n 's/^version="\(.*\)".*/\1/p' /etc/unraid-version 2>/dev/null)
+  [ -n "$DEMO_UNRAID" ] || DEMO_UNRAID="not-Unraid?"
+  DEMO_KERNEL=$(uname -r 2>/dev/null || echo unknown)
+  DEMO_CPU=$(awk -F': ' '/^model name/{print $2; exit}' /proc/cpuinfo 2>/dev/null)
+  [ -n "$DEMO_CPU" ] || DEMO_CPU=$(uname -p 2>/dev/null || echo unknown)
+  DEMO_CORES=$(nproc 2>/dev/null || echo '?')
+  DEMO_RAM=$(awk '/^MemTotal:/{printf "%.0fG", $2/1048576}' /proc/meminfo 2>/dev/null)
+  local bv bn
+  bv=$(cat /sys/devices/virtual/dmi/id/board_vendor 2>/dev/null)
+  bn=$(cat /sys/devices/virtual/dmi/id/board_name 2>/dev/null)
+  DEMO_BOARD=$(printf '%s %s' "$bv" "$bn" | sed 's/^ *//;s/ *$//')
+  [ -n "$DEMO_BOARD" ] || DEMO_BOARD="unknown"
+  local up; up=$(awk '{print int($1)}' /proc/uptime 2>/dev/null)
+  if [ -n "${up:-}" ]; then
+    DEMO_UPTIME="$(( up/86400 ))d $(( (up%86400)/3600 ))h $(( (up%3600)/60 ))m"
+  else
+    DEMO_UPTIME="unknown"
+  fi
+  DEMO_TZ=$(date '+%Z %z' 2>/dev/null)
+}
+demo_report() {
+  note "  ---- server ----"
+  note "    host:       $DEMO_HOST    machine-id: $DEMO_MACHINE_ID"
+  note "    unraid:     $DEMO_UNRAID    kernel: $DEMO_KERNEL"
+  note "    cpu:        $DEMO_CPU  ($DEMO_CORES cores)"
+  note "    ram:        $DEMO_RAM    board: $DEMO_BOARD"
+  note "    uptime:     $DEMO_UPTIME    tz: $DEMO_TZ"
+  note "  ----------------"
+}
+# Machine-readable copy for fleet tracking, written as a phase-0 artifact.
+demo_write_file() {
+  {
+    printf 'host=%s\n'          "$DEMO_HOST"
+    printf 'machine_id=%s\n'    "$DEMO_MACHINE_ID"
+    printf 'unraid_version=%s\n' "$DEMO_UNRAID"
+    printf 'kernel=%s\n'        "$DEMO_KERNEL"
+    printf 'cpu=%s\n'           "$DEMO_CPU"
+    printf 'cores=%s\n'         "$DEMO_CORES"
+    printf 'ram=%s\n'           "$DEMO_RAM"
+    printf 'board=%s\n'         "$DEMO_BOARD"
+    printf 'uptime=%s\n'        "$DEMO_UPTIME"
+    printf 'tz=%s\n'            "$DEMO_TZ"
+    printf 'scanned=%s\n'       "$(date '+%Y-%m-%d %H:%M:%S %Z')"
+  } > "$1"
+}
+
 _cur_phase_id=""; _cur_phase_csv=""; _cur_phase_t0=0
 phase_start() {
   _cur_phase_id="$1"; _cur_phase_csv="$2"; shift 2
@@ -270,14 +326,15 @@ _pf_passed="true"
 # ============================================================
 # Banner
 # ============================================================
+demo_collect
 note "=================================================================="
 note " DeepScanScriptClaude v${SCRIPT_VERSION} — read-only storage scan"
-note " Host:        $host"
 note " Started:     $(date)"
 note " Output dir:  $work"
 note " Run log:     $LOG"
 note " Error log:   $ERR_LOG"
 note " Flags:       --quick=${QUICK}  --all-extensions=${ALL_EXTENSIONS}"
+demo_report
 note "=================================================================="
 
 # ============================================================
@@ -384,6 +441,7 @@ note "=== END PRE-FLIGHT ==="
 # Phase 0 — System overview
 # ============================================================
 phase_start "0" "system_overview" "0. System overview"
+demo_write_file      "$work/00-server.txt"
 uname -a              > "$work/00-uname.txt"
 df -h                 > "$work/00-df.txt"
 df -hi                > "$work/00-df-inodes.txt"
@@ -949,7 +1007,15 @@ note ""
 note "--- Emitting summary.json ---"
 {
   printf '{\n'
-  printf '  "host": "%s",\n'           "$host"
+  printf '  "host": "%s",\n'           "$DEMO_HOST"
+  printf '  "machine_id": "%s",\n'     "$DEMO_MACHINE_ID"
+  printf '  "unraid_version": "%s",\n' "$DEMO_UNRAID"
+  printf '  "kernel": "%s",\n'         "$DEMO_KERNEL"
+  printf '  "cpu_model": "%s",\n'      "$DEMO_CPU"
+  printf '  "cores": "%s",\n'          "$DEMO_CORES"
+  printf '  "ram": "%s",\n'            "$DEMO_RAM"
+  printf '  "board": "%s",\n'          "$DEMO_BOARD"
+  printf '  "uptime": "%s",\n'         "$DEMO_UPTIME"
   printf '  "stamp": "%s",\n'          "$stamp"
   printf '  "runtime_seconds": %d,\n'  "$_run_elapsed"
   printf '  "script_version": "%s",\n' "$SCRIPT_VERSION"

@@ -78,7 +78,7 @@ source, ECC presence, array state) and a running time estimate update as you edi
 It won't let you start while a red preflight item is unresolved.
 
 ```
-┌─ hardware-stress-test v0.2.1 ─────────────────────────────────────┐
+┌─ hardware-stress-test v0.2.2 ─────────────────────────────────────┐
 │  PROFILE    < Standard >    Quick . Standard . Burn-in . Custom   │
 │  PHASES                                                           │
 │    [x]  1  CPU only                45 min                         │
@@ -160,6 +160,11 @@ Only its own scratch and its logs — never your shares, never your array:
   on any unexpected error** (EXIT trap)
 - `/boot/logs/stress-test-*.log` — the heartbeat log
 - `/boot/logs/stress-test-*.json` — machine-readable summary
+
+Both open with a **server-identity block** — hostname, machine-id, Unraid version,
+kernel, CPU, RAM, motherboard, uptime — so when you're tracking several boxes you can
+tell at a glance which one a log came from. (Safe set only: no hardware serials, MAC,
+or flash GUID.)
 
 A lock file (`/var/run/hardware-stress-test.lock`) prevents two runs from sharing
 `/dev/shm` and corrupting each other's results.
