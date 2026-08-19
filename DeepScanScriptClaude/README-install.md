@@ -1,4 +1,4 @@
-# DeepScanScriptClaude v0.3.4 — install for User Scripts
+# DeepScanScriptClaude v0.4.0 — install for User Scripts
 
 Read-only deep scan of `/mnt/user`. Designed to run from the Unraid User Scripts plugin.
 Output is saved to a user-share so it's reachable via SMB. When the scan finishes it
@@ -11,11 +11,26 @@ the main [README.md](README.md#two-ways-to-run-it).
 | File | Purpose |
 |---|---|
 | `script` | The actual bash; User Scripts always looks for a file literally named `script` |
+| `bootstrap.sh` | Optional User-Scripts-side loader — pulls latest `script` from GitHub each run |
 | `description` | One-line description shown next to the entry in the User Scripts page |
 | `name` | Friendly display name |
 | `README-install.md` | This file |
 
 ## 1. Install (one-time, per server)
+
+**Two paths — pick one.**
+
+### A. Auto-update via bootstrap (recommended)
+
+Paste [`bootstrap.sh`](bootstrap.sh) directly into a new User Scripts entry:
+
+1. **Settings → User Scripts → Add New Script** → name it `DeepScanScriptClaude` → **Edit**
+2. Paste the entire content of [`bootstrap.sh`](bootstrap.sh) → **Save Changes**
+3. Done. First run will `curl` `script` from GitHub raw, `bash -n`-check it, cache it under `/boot/config/plugins/user.scripts/scripts/DeepScanScriptClaude/`, and exec it. Subsequent runs re-fetch at most once an hour, fall back to the cached copy if offline, and fire an Unraid notification when the cached version changes.
+
+Opt-out env vars: `UNRAID_SCRIPTS_NO_UPDATE=1` (skip fetch, always run cached), `UNRAID_SCRIPTS_NO_HANDOFF=1` (silence the terminal handoff).
+
+### B. Plain paste (freeze a specific version)
 
 Copy this entire folder to:
 
@@ -40,7 +55,7 @@ Easiest paths:
   chmod +x /boot/config/plugins/user.scripts/scripts/DeepScanScriptClaude/script
   ```
 
-The User Scripts page may need a refresh to pick up a brand-new script.
+The User Scripts page may need a refresh to pick up a brand-new script. To update in place, run `--self-update` (fetches latest, syntax-checks, replaces, fires a version-bump notification).
 
 ## 2. Run
 
@@ -74,7 +89,11 @@ Enter these in the **Arguments** field next to the Run button, or append them wh
 |---|---|
 | `--quick` | Skip phases 6 (age histogram) and 8 (duplicate finder). Cuts runtime to ~1-5 min. Good for a quick first look. |
 | `--all-extensions` | Hash ALL file extensions for duplicate detection (default: media + archive types only). Slower but more thorough. |
+| `--self-update` | Fetch the latest `script` from GitHub, syntax-check, replace self, fire an Unraid notification. Exit. |
+| `--check-update` | Compare local vs. remote version, print delta, exit. Touches nothing. |
 | `--help` | Print usage and exit. |
+
+**Note on the GUI handoff:** a User Scripts click with **no flags** at all now hands off to a terminal (prints the exact command to run and fires an Unraid notification) instead of silently running the defaults. **Any flag bypasses the handoff.** So a scheduled or on-demand User Scripts run should always pass at least `--quick` or `--all-extensions` (or `--yes`-equivalent — plain `--all-extensions` with QUICK=0 will work) so the scan actually runs. Set `UNRAID_SCRIPTS_NO_HANDOFF=1` in the User Scripts environment to disable the handoff globally.
 
 ### Estimated runtime
 

@@ -31,12 +31,33 @@ Self-contained: only `nvidia-smi`, `timeout`, and Unraid's built-in `notify` hel
 
 ## Install
 
+Two paths — pick one.
+
+**A. Auto-update via bootstrap (recommended).** Paste [`bootstrap.sh`](bootstrap.sh) into User Scripts once and every run pulls the latest `script.sh` from GitHub (rate-limited to 1h, syntax-checked, cached to flash with fallback). No more SSH-and-copy when a new version lands on `main`.
+
+**B. Plain paste.** If you'd rather freeze a specific version, paste [`script.sh`](script.sh) directly.
+
+Either way:
+
 1. Unraid webGUI → **Settings → User Scripts → Add New Script**
-2. Name it `nvidia-healthcheck`, paste in [`script.sh`](script.sh)
+2. Name it `nvidia-healthcheck`, paste in the file
 3. Set schedule to **"At Startup of Array"** — this covers the post-update-reboot case, which is when the binding is most likely to break
 4. *(Optional)* also add a periodic cron schedule (e.g. every 6 hours) to catch driver drift outside of reboots
 
 Notifications use Unraid's native system, so no extra configuration is needed beyond whatever channels you already have set under **Settings → Notifications**.
+
+## Flags
+
+```
+nvidia-healthcheck --self-update    # fetch latest from GitHub, replace self, fire notification
+nvidia-healthcheck --check-update   # compare local vs. remote version, exit
+nvidia-healthcheck --version        # print version and exit
+nvidia-healthcheck --help           # this text
+```
+
+Env vars (respected by [`bootstrap.sh`](bootstrap.sh)):
+
+- `UNRAID_SCRIPTS_NO_UPDATE=1` — skip the fetch, always run the cached copy
 
 ## Optional add-on
 

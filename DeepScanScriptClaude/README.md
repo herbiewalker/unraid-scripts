@@ -7,7 +7,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](../LICENSE)
 [![Shell](https://img.shields.io/badge/Shell-Bash-4EAA25?logo=gnubash&logoColor=white)](script)
 [![Platform](https://img.shields.io/badge/Unraid-7.2%2B-e8a33d?logo=unraid&logoColor=white)](#installing)
-[![Release](https://img.shields.io/badge/release-v0.3.4-success)](script)
+[![Release](https://img.shields.io/badge/release-v0.4.0-success)](script)
 [![Writes](https://img.shields.io/badge/writes-none-critical)](#design-constraints)
 
 Drops into the Unraid **User Scripts** plugin, walks `/mnt/user`, and packs 16 phases of storage-usage detail into a single tarball you can hand off for analysis — largest files, duplicates, file-age histogram, BTRFS/ZFS/Docker/VM stats, trash locations, oversized logs.
@@ -48,18 +48,17 @@ Plus `summary.json` (machine-readable key metrics) and `_timing.csv` (per-phase 
 
 ## Installing
 
-See [README-install.md](README-install.md) for full end-user steps. The short version:
+See [README-install.md](README-install.md) for full end-user steps. Two paths:
 
-1. Copy this folder to `/boot/config/plugins/user.scripts/scripts/DeepScanScriptClaude/`
-2. Unraid webGUI → **Settings → User Scripts** → refresh → **DeepScanScriptClaude** → **Run Script** (or **Run in Background** for large arrays)
-3. Optional flags in the **Arguments** field: `--quick` (skip phases 6+8), `--all-extensions` (hash every file type in the duplicate finder), `--help`
+**A. Auto-update via bootstrap (recommended).** Paste [`bootstrap.sh`](bootstrap.sh) into User Scripts once. Every run pulls the latest `script` from GitHub (rate-limited to 1h, `bash -n`-checked, cached to flash with fallback). An Unraid notification fires when the cached version changes. No more SSH-and-copy on each release.
+
+**B. Plain paste.** Copy this folder to `/boot/config/plugins/user.scripts/scripts/DeepScanScriptClaude/` and add via **Settings → User Scripts**. `--self-update` still works for opt-in refreshes.
+
+Optional flags in the User Scripts **Arguments** field: `--quick` (skip phases 6+8), `--all-extensions` (hash every file type in the duplicate finder), `--check-update`, `--self-update`, `--help`.
 
 ### Two ways to run it
 
-**From the User Scripts GUI** — click **Run** and it scans with the defaults (or
-whatever flags you put in the Arguments field). When the scan finishes it fires an
-**Unraid notification** with the tarball name, size, and rough reclaim estimate, so a
-long background run surfaces its result without you watching the log pane.
+**From the User Scripts GUI** — a **bare click with no flags** now hands you off to a terminal: prints the exact command to run and fires an Unraid notification, then exits without touching the array. (This is the same pattern used by [`hardware-stress-test`](../hardware-stress-test), so the interactive setup can never accidentally be requested from a log-pane with no keyboard.) **Passing ANY flag** in the Arguments field bypasses the handoff — `--quick` or `--all-extensions` or `--help` all count. When the scan finishes it fires an **Unraid notification** with the tarball name, size, and rough reclaim estimate, so a long background run surfaces its result without you watching the log pane.
 
 **From a terminal (SSH / Unraid web terminal)** — run it with no flags for an
 interactive **setup screen**: arrow keys to pick Quick vs Full and toggle the
@@ -87,8 +86,14 @@ bash /boot/config/plugins/user.scripts/scripts/DeepScanScriptClaude/script
 └───────────────────────────────────────────────────────────────────┘
 ```
 
-The screen only appears on a real terminal; under User Scripts (no TTY) it's skipped
-and the scan runs straight away.
+The screen only appears on a real terminal. In User Scripts (no TTY), the script *either* runs with the flags you passed *or*, if you passed no flags at all, hands off to a terminal via notification — so it never silently runs the defaults when there was no keyboard to review them.
+
+### Env vars
+
+- `UNRAID_SCRIPTS_NO_HANDOFF=1` — silence the "open a terminal" nudge on bare GUI clicks
+- `UNRAID_SCRIPTS_NO_UPDATE=1` — respected by [`bootstrap.sh`](bootstrap.sh); skip the fetch, run cached copy
+- `UNRAID_SCRIPTS_ASCII=1` — fall back to ASCII glyphs (`v x ! > o ->`) on limited terminals
+- `NO_COLOR=1` — disable ANSI colors
 
 ### Runtime estimates
 
@@ -131,7 +136,7 @@ shellcheck script                               # if installed; non-blocking
 
 ## Status
 
-**v0.3.2.** Written and reviewed, not yet confirmed run against a live server. Remaining roadmap: a `--dry-run` flag, and CSV output for the phase 3 share×disk matrix.
+**v0.4.0** (2026-08-19). Modernization pass on top of v0.3.4: `--self-update` / `--check-update`, sibling [`bootstrap.sh`](bootstrap.sh) for User-Scripts-side auto-fetch, GUI → terminal handoff for bare clicks, host-prefixed notification subjects. Remaining roadmap: a `--dry-run` flag, and CSV output for the phase 3 share×disk matrix.
 
 ## License
 

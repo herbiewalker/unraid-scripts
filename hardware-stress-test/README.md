@@ -1,6 +1,6 @@
 # hardware-stress-test
 
-CPU + RAM stress test for Unraid, built around **crash forensics** and the
+**v0.3.0** — CPU + RAM stress test for Unraid, built around **crash forensics** and the
 hardware's **own error counters** — not a pass/fail score.
 
 ## The problem it solves
@@ -78,7 +78,7 @@ source, ECC presence, array state) and a running time estimate update as you edi
 It won't let you start while a red preflight item is unresolved.
 
 ```
-┌─ hardware-stress-test v0.2.2 ─────────────────────────────────────┐
+┌─ hardware-stress-test v0.3.0 ─────────────────────────────────────┐
 │  PROFILE    < Standard >    Quick . Standard . Burn-in . Custom   │
 │  PHASES                                                           │
 │    [x]  1  CPU only                45 min                         │
@@ -109,6 +109,14 @@ If you'd rather run it straight from User Scripts with no screen, give it a flag
 
 Either way: **stop the array first** (see below).
 
+## Install
+
+Two paths — pick one.
+
+**A. Auto-update via bootstrap (recommended).** Paste [`bootstrap.sh`](bootstrap.sh) into User Scripts once. Every run pulls the latest `script.sh` from GitHub (rate-limited to 1h, `bash -n`-checked, cached to flash with fallback on network or syntax failure). An Unraid notification fires when the cached version changes. No more SSH-and-copy on each release.
+
+**B. Plain paste.** Paste [`script.sh`](script.sh) into User Scripts directly if you'd rather freeze a specific version. `--self-update` still works for opt-in refreshes.
+
 ## Configuration flags
 
 ```
@@ -123,8 +131,17 @@ Either way: **stop the array first** (see below).
 --preflight-only                     Print the preflight checks and exit
 --no-tui / --yes                     Skip the setup screen / skip confirmation
 --override-array                     Run even if the array is started (risky)
+--self-update                        Fetch the latest script.sh from GitHub, replace self, exit
+--check-update                       Compare local vs. remote version, exit
 --version / --help
 ```
+
+Env vars:
+
+- `UNRAID_SCRIPTS_NO_HANDOFF=1` — silence the "open a terminal" handoff
+- `UNRAID_SCRIPTS_NO_UPDATE=1` — used by [`bootstrap.sh`](bootstrap.sh); skip the fetch, run cached
+- `UNRAID_SCRIPTS_ASCII=1` — fall back to ASCII glyphs (`v x ! > o ->`)
+- `NO_COLOR=1` — disable ANSI colors
 
 `--ram-gb auto` takes the smaller of 80 % of free tmpfs and a third of physical RAM
 — enough to exercise memory without inviting the OOM killer, whose kill looks

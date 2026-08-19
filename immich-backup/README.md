@@ -9,7 +9,7 @@
 ![Shell](https://img.shields.io/badge/shell-bash-4EAA25?logo=gnubash&logoColor=white)
 ![Self-contained](https://img.shields.io/badge/self--contained-no_installs-success)
 
-**Status:** v0.1.4 — **first live run on server-b 2026-08-18** (425 GB rsync + trap-based stack restart both verified live).
+**Status:** v0.2.0 — interactive setup TUI + GUI→terminal handoff + self-updater on top of v0.1.5's live-verified base (**first live run on server-b 2026-08-18**: 425 GB rsync + trap-based stack restart both verified live).
 
 </div>
 
@@ -33,11 +33,15 @@ Retention is Grandfather–Father–Son (default 7 daily / 4 weekly / 6 monthly)
 
 Prerequisites: root on Unraid, docker running, an Immich stack whose containers are named `immich*`.
 
+**Install once via the bootstrap** — paste [`bootstrap.sh`](bootstrap.sh) into a new User Scripts entry, and every run pulls the latest `script.sh` from GitHub (rate-limited to 1h, `bash -n`-checked, cached to flash with fallback). Or paste [`script.sh`](script.sh) directly to freeze a version.
+
 Full backup (default `--dest /mnt/user/data/backup_immich`, GFS 7d/4w/6m retention):
 
 ```bash
 bash /boot/config/plugins/user.scripts/scripts/immich-backup/script
 ```
+
+**Note:** from a TTY, this now opens an **interactive review-and-confirm setup screen** — host, dest, sources, include toggles, retention, preflight thresholds, stack plan. ENTER proceeds, q/ESC cancels. See the mockup below. Pass `--confirm` or `--no-tui` to skip the screen; pass `--quiet` for cron-friendly output.
 
 > [!WARNING]
 > Whenever you run this on a **new** target for the first time (different Unraid box,
@@ -67,7 +71,19 @@ script --list --dest /mnt/user/data/backup_immich
 
 # integrity-check a specific backup: tar readability + sha256
 script --verify /mnt/user/data/backup_immich/20260818-0300
+
+# manual self-update: pull latest script.sh from GitHub, replace, notify
+script --self-update
+
+# just check if a newer version exists on main
+script --check-update
 ```
+
+**Env vars** — respected globally:
+
+- `UNRAID_SCRIPTS_NO_HANDOFF=1` — silence the GUI→terminal handoff on bare User Scripts clicks
+- `UNRAID_SCRIPTS_NO_UPDATE=1` — respected by [`bootstrap.sh`](bootstrap.sh); skip the fetch, always run cached
+- `NO_COLOR=1` — disable ANSI colors in TUI + log output
 
 ## What it does, phase by phase
 
@@ -93,11 +109,40 @@ Backups are dated `YYYYMMDD-HHMM/`. On every run:
 
 A backup that qualifies for any of the three keep sets is kept. Everything else is pruned. This mirrors the standard homelab-friendly interpretation of GFS and slots into the industry-standard 3-2-1 rule as the "1 local copy" — mirror to offsite separately if you want it (rclone against `--dest` is fine because backup directories are self-contained).
 
-## Fresh-look TUI
+## Interactive setup TUI (v0.2.0)
+
+On a TTY run of `MODE=run` (default), the script now shows a review-and-confirm screen before touching anything. It's not a full editor — all fields have `--flag` equivalents — but it makes what's about to happen explicit before you hit ENTER:
 
 ```
 ╭──────────────────────────────────────────────────────────────────────────╮
-│ immich-backup v0.1.0  ·  backup run  ·  stamp 20260818-0300              │
+│ immich-backup v0.2.0  ·  interactive setup                               │
+├──────────────────────────────────────────────────────────────────────────┤
+│  HOST         server-b  ·  Unraid 7.3.1  ·  128 GB                       │
+├──────────────────────────────────────────────────────────────────────────┤
+│  DEST         /mnt/user/data/backup_immich                               │
+│  SOURCES      photos=/mnt/user/immich/immich/photos                      │
+│               appdata=/mnt/user/appdata_immich                           │
+│               compose=/boot/config/plugins/compose.manager/projects/…    │
+│  INCLUDE      photos=yes   appdata=yes   compose=yes                     │
+│  RETENTION    daily=7   weekly=4   monthly=6                             │
+│  PREFLIGHT    min-free=50 GB   strict-space=no                           │
+│  STACK        will stop + restart via trap                               │
+├──────────────────────────────────────────────────────────────────────────┤
+│  ENTER proceed  ·  q or ESC cancel  ·  changes: re-run with --flag       │
+╰──────────────────────────────────────────────────────────────────────────╯
+```
+
+Skipped when: `--no-tui`, `--confirm`, `--quiet`, no TTY, or MODE ≠ run.
+
+## GUI → terminal handoff
+
+Bare clicks from the User Scripts GUI (no TTY + no flags) heading for a real backup now print a "open a terminal and run this" block and fire an Unraid notification instead of silently kicking off a live backup. **Read-only modes bypass** — `--list`, `--remind`, `--preflight-only`, `--dry-run`, and `--verify` all set MODE≠run and run non-interactively as expected. Set `UNRAID_SCRIPTS_NO_HANDOFF=1` in the User Scripts environment to disable the handoff globally.
+
+## Per-phase progress trail
+
+```
+╭──────────────────────────────────────────────────────────────────────────╮
+│ immich-backup v0.2.0  ·  backup run  ·  stamp 20260818-0300              │
 ├──────────────────────────────────────────────────────────────────────────┤
 
   host       server-b
@@ -172,7 +217,7 @@ bash /boot/config/plugins/user.scripts/scripts/immich-backup/script --remind
 
 Schedule: `0 9 1 * *` (9am on the 1st of each month) for a monthly nudge — the icon escalates to `warning` when the last backup is 30+ days old.
 
-## Known limitations (v0.1.0)
+## Known limitations (v0.2.0)
 
 - **`--restore` is stubbed.** It refuses to run, on purpose. The restore path will land in v0.2 once `--run` has one green live-target run behind it and the failure modes are understood; running a restore before that would be trusting a backup that hasn't been proven yet.
 - **No encryption.** The archive is plaintext. If `--dest` is a share that leaves the box, encrypt at the destination layer (rclone crypt, LUKS on the target disk).
