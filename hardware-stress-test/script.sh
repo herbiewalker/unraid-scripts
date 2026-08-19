@@ -75,7 +75,13 @@ set -o pipefail
 # set -e is intentionally OFF (repo convention): a phase must be able to fail
 # without killing the run, because a partial result is still evidence.
 
-SCRIPT_VERSION="0.2.2"
+SCRIPT_VERSION="0.3.0"
+TOOL="hardware-stress-test"
+
+# ---- self-update source (see --self-update / --check-update) --------------
+UPDATE_REPO="herbiewalker/unraid-scripts"
+UPDATE_BRANCH="main"
+UPDATE_URL="https://raw.githubusercontent.com/${UPDATE_REPO}/${UPDATE_BRANCH}/${TOOL}/script.sh"
 
 # ============================================================
 # Defaults (the Standard profile). Override via TUI or flags.
@@ -181,8 +187,15 @@ Behaviour:
   --no-tui              Never show the setup screen, even on a terminal
   --yes, -y             Skip the confirmation prompt
   --override-array      Run even if the array is started (NOT recommended)
+  --self-update         Fetch the latest script.sh from GitHub, replace self, exit
+  --check-update        Compare local vs. remote version, exit
   --version             Print version and exit
   --help, -h            This text
+
+Env vars:
+  UNRAID_SCRIPTS_NO_HANDOFF=1   Silence the "open a terminal" handoff
+  UNRAID_SCRIPTS_ASCII=1        Use ASCII fallback glyphs (v x ! > o ->)
+  NO_COLOR=1                    Disable ANSI colors
 
 Exit codes:
   0  all phases completed, no hardware errors detected
@@ -211,6 +224,8 @@ parse_args() {
       --no-tui)    USE_TUI="never" ;;
       --yes|-y)    ASSUME_YES=1 ;;
       --override-array) OVERRIDE_ARRAY=1 ;;
+      --self-update)  self_update;  exit $? ;;
+      --check-update) check_update; exit $? ;;
       --version)   printf 'hardware-stress-test %s\n' "$SCRIPT_VERSION"; exit 0 ;;
       --help|-h)   usage; exit 0 ;;
       *) printf 'Unknown option: %s (try --help)\n' "$1" >&2; exit 1 ;;
@@ -840,7 +855,17 @@ cooldown() {
 W=67
 C_RESET=$'\033[0m'; C_DIM=$'\033[2m';  C_BOLD=$'\033[1m'
 C_RED=$'\033[31m';  C_GRN=$'\033[32m'; C_YEL=$'\033[33m'
-C_CYA=$'\033[36m';  C_INV=$'\033[7m'
+C_CYA=$'\033[36m';  C_BLU=$'\033[34m'; C_MAG=$'\033[35m'
+C_INV=$'\033[7m'
+[ -n "${NO_COLOR:-}" ] && { C_RESET=""; C_DIM=""; C_BOLD=""; C_RED=""; C_GRN=""; C_YEL=""; C_CYA=""; C_BLU=""; C_MAG=""; C_INV=""; }
+
+# Modernized glyphs — unicode by default; UNRAID_SCRIPTS_ASCII=1 for the
+# fallback set on terminals that can't render them.
+if [ "${UNRAID_SCRIPTS_ASCII:-0}" = "1" ]; then
+  G_OK="v";  G_BAD="x";  G_WARN="!";  G_INFO=">";  G_DOT="o";  G_ARROW="->"
+else
+  G_OK="✓";  G_BAD="✗";  G_WARN="⚠";  G_INFO="▶";  G_DOT="●";  G_ARROW="→"
+fi
 
 # Guard cursor escapes behind a TTY check: tui_show runs from the EXIT trap on
 # every exit, including non-interactive/User-Scripts runs, where a raw escape
@@ -1156,12 +1181,109 @@ self_path() {
 notify_unraid() {
   local subj="$1" desc="$2" icon="${3:-normal}"
   [ -x /usr/local/emhttp/webGui/scripts/notify ] || return 0
+  local h; h=$(hostname 2>/dev/null || echo unknown)
   /usr/local/emhttp/webGui/scripts/notify \
-    -e "hardware-stress-test" -s "$subj" -d "$desc" -i "$icon" 2>/dev/null
+    -e "$TOOL" -s "[$h] $subj" -d "$desc" -i "$icon" 2>/dev/null
   return 0
 }
 
+# ============================================================
+# Self-update — pull latest from GitHub, syntax-check, replace, notify.
+# Deliberately manual: --self-update runs the fetch/install; --check-update
+# only reports the version delta. The bootstrap.sh in this dir (paste into
+# User Scripts once) does an auto-update on every User Scripts run.
+# ============================================================
+_script_version_of() {
+  grep -oE '^(SCRIPT_VERSION|VERSION)="[0-9]+\.[0-9]+\.[0-9]+"' "$1" 2>/dev/null \
+    | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+'
+}
+
+check_update() {
+  local tmp; tmp=$(mktemp 2>/dev/null) || tmp="/tmp/${TOOL}.check.$$"
+  if ! curl -fsSL --max-time 15 "$UPDATE_URL" -o "$tmp" 2>/dev/null; then
+    printf '  %s%s%s could not reach %s\n' "$C_YEL" "$G_WARN" "$C_RESET" "$UPDATE_URL"
+    rm -f "$tmp"; return 1
+  fi
+  local remote; remote=$(_script_version_of "$tmp")
+  rm -f "$tmp"
+  if [ -z "$remote" ]; then
+    printf '  %s%s%s remote fetched but version not parseable\n' "$C_YEL" "$G_WARN" "$C_RESET"
+    return 1
+  fi
+  printf '  local:  %s\n' "$SCRIPT_VERSION"
+  printf '  remote: %s\n' "$remote"
+  if [ "$SCRIPT_VERSION" = "$remote" ]; then
+    printf '  %s%s%s up to date\n' "$C_GRN" "$G_OK" "$C_RESET"
+  else
+    printf '  %s%s%s new version available — run: %s --self-update\n' \
+      "$C_YEL" "$G_INFO" "$C_RESET" "$(self_path)"
+  fi
+  return 0
+}
+
+self_update() {
+  local target; target=$(self_path)
+  if [ ! -w "$target" ] && [ ! -w "$(dirname "$target")" ]; then
+    printf '  %s%s%s cannot write %s — need root\n' "$C_RED" "$G_BAD" "$C_RESET" "$target" >&2
+    return 1
+  fi
+  local tmp; tmp=$(mktemp 2>/dev/null) || tmp="/tmp/${TOOL}.upd.$$"
+  printf '  fetching %s ...\n' "$UPDATE_URL"
+  if ! curl -fsSL --max-time 30 "$UPDATE_URL" -o "$tmp"; then
+    printf '  %s%s%s fetch failed\n' "$C_RED" "$G_BAD" "$C_RESET" >&2
+    rm -f "$tmp"; return 1
+  fi
+  if ! bash -n "$tmp" 2>/dev/null; then
+    printf '  %s%s%s downloaded file failed bash -n; keeping current copy\n' \
+      "$C_RED" "$G_BAD" "$C_RESET" >&2
+    rm -f "$tmp"; return 1
+  fi
+  local new_ver; new_ver=$(_script_version_of "$tmp")
+  if [ -z "$new_ver" ]; then
+    printf '  %s%s%s downloaded file has no parseable VERSION; refusing\n' \
+      "$C_RED" "$G_BAD" "$C_RESET" >&2
+    rm -f "$tmp"; return 1
+  fi
+  install -m 0755 "$tmp" "$target"
+  rm -f "$tmp"
+  printf '  %s%s%s updated: %s %s %s  (%s)\n' \
+    "$C_GRN" "$G_OK" "$C_RESET" "$SCRIPT_VERSION" "$G_ARROW" "$new_ver" "$target"
+  notify_unraid "Updated to v$new_ver" \
+    "$TOOL updated from v$SCRIPT_VERSION to v$new_ver via --self-update (source: $UPDATE_REPO@$UPDATE_BRANCH)." \
+    "normal"
+  return 0
+}
+
+# ============================================================
+# Modernized banner — stdout-only (no log tee), rendered from DEMO_* globals.
+# Adds visual polish to the terminal without polluting the flash log file.
+# Called from main() BEFORE the say-block STARTING banner (which still goes
+# to the log verbatim as it always has).
+# ============================================================
+print_banner_modern() {
+  [ -t 1 ] || return 0
+  local w=76
+  local mid1="host   ${DEMO_HOST:-?}  ·  Unraid ${DEMO_UNRAID:-?}  ·  kernel ${DEMO_KERNEL:-?}"
+  local mid2="cpu    ${DEMO_CPU:-?} (${DEMO_CORES:-?} cores)  ·  ${DEMO_RAM:-?} RAM"
+  local mid3="board  ${DEMO_BOARD:-?}"
+  local mid4="uptime ${DEMO_UPTIME:-?}  ·  ${DEMO_TZ:-?}"
+  local title=" ${TOOL} v${SCRIPT_VERSION} "
+  local rest=$(( w - ${#title} - 2 ))
+  printf '\n%s┌─%s%s' "$C_CYA" "$C_RESET$C_BOLD" "$title"
+  printf '%s' "$C_RESET$C_CYA"
+  local i=0; while [ $i -lt $rest ]; do printf '─'; i=$((i+1)); done
+  printf '%s\n' "─┐"
+  for line in "$mid1" "$mid2" "$mid3" "$mid4"; do
+    local pad=$(( w - ${#line} - 4 )); [ $pad -lt 0 ] && pad=0
+    printf '%s│  %s%s %s%s%*s%s│%s\n' \
+      "$C_CYA" "$C_MAG" "$G_DOT" "$C_RESET" "$line" "$pad" "" "$C_CYA" "$C_RESET"
+  done
+  printf '%s└' "$C_CYA"; i=0; while [ $i -lt $((w-1)) ]; do printf '─'; i=$((i+1)); done
+  printf '─┘%s\n\n' "$C_RESET"
+}
+
 handoff_to_terminal() {
+  [ "${UNRAID_SCRIPTS_NO_HANDOFF:-0}" = "1" ] && return 0
   local self cmd
   self=$(self_path)
   cmd="bash $self"
@@ -1246,6 +1368,7 @@ main() {
   MCE_START=$(mce_count)
   THROTTLE_START=$(throttle_sum)
   demo_collect
+  print_banner_modern
 
   say "================================================================"
   say "STRESS TEST STARTING — v$SCRIPT_VERSION"

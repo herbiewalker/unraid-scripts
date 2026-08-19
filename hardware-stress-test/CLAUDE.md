@@ -4,8 +4,30 @@ CPU + RAM stress test for Unraid, built around crash forensics and the hardware'
 own error counters rather than a pass/fail score. Runs via the User Scripts plugin,
 or directly from a terminal for the interactive setup screen.
 
-Current version: **v0.2.2** · first live Unraid run 2026-07-25 (clean pass; hwmon
-temp + EDAC-absent detection + RAM loop validated — see HANDOFF).
+Current version: **v0.3.0** (see modernization notes below). v0.2.2's first
+live Unraid run (2026-07-25, clean pass; hwmon temp + EDAC-absent detection +
+RAM loop validated — see HANDOFF) still stands as the last live-hardware
+data point.
+
+## Modernization pass (v0.3.0)
+
+- `--self-update` / `--check-update` flags; sibling `bootstrap.sh` for
+  User-Scripts-side auto-update on every run.
+- `handoff_to_terminal` now respects `UNRAID_SCRIPTS_NO_HANDOFF=1`.
+- `notify_unraid` subject is host-prefixed `[<host>] ...` for fleet clarity.
+- Modernized `print_banner_modern` stdout-only banner (colour + box using
+  DEMO_*); the say-tee'd STARTING banner below it stays plain text in the log.
+- Palette extended (`C_BLU`, `C_MAG`); glyph set added (`G_OK`/`G_BAD`/…);
+  both respect `NO_COLOR` and `UNRAID_SCRIPTS_ASCII`.
+
+## Destructive-op audit — updated
+
+`grep -nE '\b(rm|mv|dd)\b' script.sh` now shows several new `rm -f "$tmp"`
+lines inside `self_update` / `check_update`. Every one targets a `mktemp`'d
+file under `/tmp`. `install -m 0755 "$tmp" "$target"` inside `self_update`
+writes to `/boot/...` — the ONLY write outside `$SHM_ROOT` / `/boot/logs`,
+gated behind an explicit `--self-update` flag. Both are documented exceptions
+to the "writes only to its own scratch + logs" rule.
 
 ## Files
 
