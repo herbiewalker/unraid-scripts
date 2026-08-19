@@ -30,7 +30,98 @@
 set -u
 set -o pipefail
 
-SCRIPT_VERSION="0.3.4"
+SCRIPT_VERSION="0.4.0"
+TOOL="DeepScanScriptClaude"
+RAW_ARGC=$#
+
+# ---- self-update source (see --self-update / --check-update) --------------
+UPDATE_REPO="herbiewalker/unraid-scripts"
+UPDATE_BRANCH="main"
+UPDATE_URL="https://raw.githubusercontent.com/${UPDATE_REPO}/${UPDATE_BRANCH}/${TOOL}/script"
+
+# Minimal ANSI + glyphs for early messages (self-update runs BEFORE the
+# fuller palette below). NO_COLOR / no-TTY = no escapes.
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  _EC_R=$'\033[0m'; _EC_G=$'\033[32m'; _EC_Y=$'\033[33m'; _EC_D=$'\033[31m'
+else
+  _EC_R=""; _EC_G=""; _EC_Y=""; _EC_D=""
+fi
+if [ "${UNRAID_SCRIPTS_ASCII:-0}" = "1" ]; then
+  _EG_OK="v"; _EG_BAD="x"; _EG_WARN="!"; _EG_INFO=">"; _EG_ARROW="->"
+else
+  _EG_OK="✓"; _EG_BAD="✗"; _EG_WARN="⚠"; _EG_INFO="▶"; _EG_ARROW="→"
+fi
+
+self_path() { local p="${BASH_SOURCE[0]:-$0}"; readlink -f "$p" 2>/dev/null || printf '%s' "$p"; }
+
+notify_unraid() {
+  local subj="$1" desc="$2" icon="${3:-normal}"
+  [ -x /usr/local/emhttp/webGui/scripts/notify ] || return 0
+  local h; h=$(hostname 2>/dev/null || echo unknown)
+  /usr/local/emhttp/webGui/scripts/notify \
+    -e "$TOOL" -s "[$h] $subj" -d "$desc" -i "$icon" 2>/dev/null
+  return 0
+}
+
+_script_version_of() {
+  grep -oE '^(SCRIPT_VERSION|VERSION)="[0-9]+\.[0-9]+\.[0-9]+"' "$1" 2>/dev/null \
+    | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+'
+}
+
+check_update() {
+  local tmp; tmp=$(mktemp 2>/dev/null) || tmp="/tmp/${TOOL}.check.$$"
+  if ! curl -fsSL --max-time 15 "$UPDATE_URL" -o "$tmp" 2>/dev/null; then
+    printf '  %s%s%s could not reach %s\n' "$_EC_Y" "$_EG_WARN" "$_EC_R" "$UPDATE_URL"
+    rm -f "$tmp"; return 1
+  fi
+  local remote; remote=$(_script_version_of "$tmp"); rm -f "$tmp"
+  if [ -z "$remote" ]; then
+    printf '  %s%s%s remote fetched but version not parseable\n' "$_EC_Y" "$_EG_WARN" "$_EC_R"
+    return 1
+  fi
+  printf '  local:  %s\n' "$SCRIPT_VERSION"
+  printf '  remote: %s\n' "$remote"
+  if [ "$SCRIPT_VERSION" = "$remote" ]; then
+    printf '  %s%s%s up to date\n' "$_EC_G" "$_EG_OK" "$_EC_R"
+  else
+    printf '  %s%s%s new version available — run: %s --self-update\n' \
+      "$_EC_Y" "$_EG_INFO" "$_EC_R" "$(self_path)"
+  fi
+  return 0
+}
+
+self_update() {
+  local target; target=$(self_path)
+  if [ ! -w "$target" ] && [ ! -w "$(dirname "$target")" ]; then
+    printf '  %s%s%s cannot write %s — need root\n' "$_EC_D" "$_EG_BAD" "$_EC_R" "$target" >&2
+    return 1
+  fi
+  local tmp; tmp=$(mktemp 2>/dev/null) || tmp="/tmp/${TOOL}.upd.$$"
+  printf '  fetching %s ...\n' "$UPDATE_URL"
+  if ! curl -fsSL --max-time 30 "$UPDATE_URL" -o "$tmp"; then
+    printf '  %s%s%s fetch failed\n' "$_EC_D" "$_EG_BAD" "$_EC_R" >&2
+    rm -f "$tmp"; return 1
+  fi
+  if ! bash -n "$tmp" 2>/dev/null; then
+    printf '  %s%s%s downloaded file failed bash -n; keeping current copy\n' \
+      "$_EC_D" "$_EG_BAD" "$_EC_R" >&2
+    rm -f "$tmp"; return 1
+  fi
+  local new_ver; new_ver=$(_script_version_of "$tmp")
+  if [ -z "$new_ver" ]; then
+    printf '  %s%s%s downloaded file has no parseable VERSION; refusing\n' \
+      "$_EC_D" "$_EG_BAD" "$_EC_R" >&2
+    rm -f "$tmp"; return 1
+  fi
+  install -m 0755 "$tmp" "$target"
+  rm -f "$tmp"
+  printf '  %s%s%s updated: %s %s %s  (%s)\n' \
+    "$_EC_G" "$_EG_OK" "$_EC_R" "$SCRIPT_VERSION" "$_EG_ARROW" "$new_ver" "$target"
+  notify_unraid "Updated to v$new_ver" \
+    "$TOOL updated from v$SCRIPT_VERSION to v$new_ver via --self-update (source: $UPDATE_REPO@$UPDATE_BRANCH)." \
+    "normal"
+  return 0
+}
 
 QUICK=0
 ALL_EXTENSIONS=0
@@ -38,14 +129,24 @@ for _arg in "$@"; do
   case "$_arg" in
     --quick)          QUICK=1 ;;
     --all-extensions) ALL_EXTENSIONS=1 ;;
+    --self-update)    self_update;  exit $? ;;
+    --check-update)   check_update; exit $? ;;
+    --version)        printf '%s %s\n' "$TOOL" "$SCRIPT_VERSION"; exit 0 ;;
     --help|-h)
-      printf 'Usage: script [--quick] [--all-extensions] [--help]\n'
+      printf 'Usage: script [--quick] [--all-extensions] [flags]\n\n'
       printf '  --quick           Skip phases 6 (age histogram) and 8 (duplicates)\n'
       printf '  --all-extensions  Hash ALL extensions in duplicate finder (default: media+archive only)\n'
-      printf '\n'
+      printf '  --self-update     Fetch the latest script from GitHub, replace self, exit\n'
+      printf '  --check-update    Compare local vs. remote version, exit\n'
+      printf '  --version         Print version and exit\n'
+      printf '  --help, -h        This text\n\n'
+      printf 'Env vars:\n'
+      printf '  UNRAID_SCRIPTS_NO_HANDOFF=1   Silence the "open a terminal" handoff\n'
+      printf '  UNRAID_SCRIPTS_ASCII=1        Use ASCII fallback glyphs\n'
+      printf '  NO_COLOR=1                    Disable ANSI colors\n\n'
       printf 'Run from a terminal (SSH / Unraid web terminal) with no flags for an\n'
-      printf 'interactive setup screen. Under User Scripts (no TTY) it runs with the\n'
-      printf 'flags above and fires an Unraid notification when the scan completes.\n'
+      printf 'interactive setup screen. Under User Scripts (no TTY) with no flags it\n'
+      printf 'prints instructions and fires a notification instead of running silently.\n'
       exit 0 ;;
     *) printf 'Unknown flag: %s\n' "$_arg" >&2; exit 2 ;;
   esac
@@ -70,16 +171,8 @@ choose_outroot() {
   echo "$script_dir"
 }
 
-# ============================================================
-# Unraid notification helper (best-effort; no-op off Unraid)
-# ============================================================
-notify_unraid() {
-  local subj="$1" desc="$2" icon="${3:-normal}"
-  [ -x /usr/local/emhttp/webGui/scripts/notify ] || return 0
-  /usr/local/emhttp/webGui/scripts/notify \
-    -e "DeepScanScriptClaude" -s "$subj" -d "$desc" -i "$icon" 2>/dev/null
-  return 0
-}
+# notify_unraid + self_update / check_update are defined near the top of this
+# file (they had to run BEFORE the arg loop). Do not redefine here.
 
 # ============================================================
 # Interactive setup screen (ANSI TUI)
@@ -202,10 +295,42 @@ deepscan_tui() {
   done
 }
 
-# Interactive setup screen — only from a real terminal. Under User Scripts
-# (no TTY) this is skipped and the scan runs with defaults / passed flags.
+# ============================================================
+# GUI → terminal handoff (ported from hardware-stress-test).
+# Runs BEFORE work-dir + log creation to keep the single-rm invariant intact.
+# ============================================================
+handoff_to_terminal() {
+  [ "${UNRAID_SCRIPTS_NO_HANDOFF:-0}" = "1" ] && return 0
+  local self cmd; self=$(self_path); cmd="bash $self"
+  printf '\n'
+  printf '  ────────────────────────────────────────────────────────────\n'
+  printf '  DeepScanScriptClaude has an interactive setup screen (mode,\n'
+  printf '  all-extensions toggle, live free-space + est-runtime preview).\n'
+  printf '  The User Scripts window has no keyboard, so it cannot run here.\n\n'
+  printf '  To configure and run it:\n'
+  printf '    1. Open a terminal — Unraid webGUI  >_  icon, or SSH\n'
+  printf '    2. Run:  %s\n\n' "$cmd"
+  printf '  Prefer a non-interactive scan from User Scripts? Re-run with:\n'
+  printf '    --quick             Skip phases 6+8 (fast smoke test)\n'
+  printf '    --all-extensions    Hash every extension for the dup finder\n'
+  printf '    --help              All options\n\n'
+  printf '  To silence this handoff:  UNRAID_SCRIPTS_NO_HANDOFF=1\n'
+  printf '  ────────────────────────────────────────────────────────────\n\n'
+  notify_unraid \
+    "Open a terminal for the interactive setup" \
+    "$TOOL was launched with no TTY (User Scripts). Open the Unraid terminal (or SSH) and run: $cmd — or re-run from User Scripts with flags (see --help)." \
+    "normal"
+  return 0
+}
+
+# Interactive setup screen — from a real terminal only. No TTY + no flags means
+# the user launched us from User Scripts with a bare click: hand off to a
+# terminal instead of silently running defaults. Any flag skips the handoff.
 if [ -t 0 ] && [ -t 1 ]; then
   deepscan_tui
+elif [ "${RAW_ARGC:-0}" -eq 0 ]; then
+  handoff_to_terminal
+  exit 0
 fi
 
 out_root=$(choose_outroot)/DeepScanScriptClaude
@@ -327,6 +452,30 @@ _pf_passed="true"
 # Banner
 # ============================================================
 demo_collect
+# Modernized stdout-only banner (TTY runs get colour + box; log file stays
+# plain via note() below).
+print_banner_modern() {
+  [ -t 1 ] || return 0
+  local w=76 line pad
+  local title=" ${TOOL} v${SCRIPT_VERSION} "
+  local rest=$(( w - ${#title} - 2 ))
+  printf '\n%s┌─%s%s%s' "$_EC_G" "$_EC_R" "$title" "$_EC_G"
+  local i=0; while [ $i -lt $rest ]; do printf '─'; i=$((i+1)); done
+  printf '─┐%s\n' "$_EC_R"
+  for line in \
+    "host   ${DEMO_HOST}  ·  Unraid ${DEMO_UNRAID}  ·  kernel ${DEMO_KERNEL}" \
+    "cpu    ${DEMO_CPU} (${DEMO_CORES} cores)  ·  ${DEMO_RAM} RAM" \
+    "board  ${DEMO_BOARD}" \
+    "uptime ${DEMO_UPTIME}  ·  ${DEMO_TZ}"
+  do
+    pad=$(( w - ${#line} - 4 )); [ $pad -lt 0 ] && pad=0
+    printf '%s│  %s%s %s%s%*s%s│%s\n' \
+      "$_EC_G" "$_EC_Y" "$_EG_INFO" "$_EC_R" "$line" "$pad" "" "$_EC_G" "$_EC_R"
+  done
+  printf '%s└' "$_EC_G"; i=0; while [ $i -lt $((w-1)) ]; do printf '─'; i=$((i+1)); done
+  printf '─┘%s\n\n' "$_EC_R"
+}
+print_banner_modern
 note "=================================================================="
 note " DeepScanScriptClaude v${SCRIPT_VERSION} — read-only storage scan"
 note " Started:     $(date)"

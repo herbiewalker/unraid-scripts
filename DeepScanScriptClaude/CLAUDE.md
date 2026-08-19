@@ -2,7 +2,33 @@
 
 Read-only deep-scan bash script for a fleet of Unraid servers. Runs via the User Scripts plugin. Produces a tarball of storage-usage artifacts for file-level "where is my space going" analysis.
 
-Current version: **v0.3.4** (~1080 lines)
+Current version: **v0.4.0**
+
+## Modernization pass (v0.4.0)
+
+- Ported `handoff_to_terminal` from hardware-stress-test — a bare User Scripts
+  click (no TTY + no flags) now prints "open a terminal" + fires a
+  notification instead of silently running with defaults. Any flag bypasses.
+  Env-var opt-out: `UNRAID_SCRIPTS_NO_HANDOFF=1`.
+- `--self-update` / `--check-update` flags; sibling `bootstrap.sh` for
+  User-Scripts-side auto-update on every run.
+- `notify_unraid` subject is host-prefixed `[<host>] ...`. Defined near the
+  top of the file (not at line ~180 anymore) because the arg loop runs before
+  the mid-file function block.
+- Modernized `print_banner_modern` stdout-only banner (colour + box using
+  DEMO_*); the `note`-tee'd banner below it stays plain text in the log.
+- Env vars: `UNRAID_SCRIPTS_NO_HANDOFF=1`, `UNRAID_SCRIPTS_ASCII=1`,
+  `NO_COLOR=1`.
+
+## Destructive-op audit — updated
+
+`grep -nE '^[[:space:]]*(rm|mv|dd)\b' script` shows the single-`rm` invariant
+(one `rm` on `$work` intermediates before the tarball) PLUS five new `rm -f
+"$tmp"` lines inside `self_update` / `check_update`. Every new `rm` targets a
+`mktemp`'d file under `/tmp`. `install -m 0755 "$tmp" "$target"` inside
+`self_update` writes to `/boot/...` — the ONLY write outside `$work`, gated
+behind an explicit `--self-update` flag. These are documented exceptions to
+the read-only invariant.
 
 ## Files
 
