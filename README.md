@@ -21,6 +21,32 @@ Personal collection of [User Scripts plugin](https://forums.unraid.net/topic/475
 - 🖥️ **Runs from the webGUI.** Every script here is a single file that drops straight into **Settings → User Scripts** — no SSH required to use one, just to install it.
 - 🏷️ **Fleet-attributable output.** Each script stamps its logs (and, where relevant, its JSON summary and a `00-server.txt`) with a server-identity block — hostname, machine-id, Unraid version, kernel, CPU, RAM, board, uptime — so when you run them across several boxes you always know which one a result came from. Safe set only: no hardware serials, MAC, or flash GUID.
 
+## Install — the auto-update bootstrap (paste once, stay fresh)
+
+Every tool in this repo now ships with a small `bootstrap.sh` next to its `script[.sh]`. Paste the bootstrap into **Settings → User Scripts → Add New Script → Edit** *once* and the User Scripts run will:
+
+1. Fetch the latest `script[.sh]` from GitHub raw (`main` branch),
+2. `bash -n`-check it before touching disk,
+3. Cache it to flash at `/boot/config/plugins/user.scripts/scripts/<tool>/`,
+4. Fire an Unraid notification whenever a new version replaces the cached one,
+5. Fall back to the cached copy if the fetch or syntax check fails (safe when the LAN is down),
+6. Rate-limit the fetch to once an hour so quick re-runs don't hit GitHub every time.
+
+**No more SSH-and-copy on every update** — merge a new version to `main` and the next User Scripts run pulls it. Opt-out env vars:
+
+- `UNRAID_SCRIPTS_NO_UPDATE=1` — skip the fetch, always run the cached copy
+- `UNRAID_SCRIPTS_NO_HANDOFF=1` — silence the "open a terminal" nudge on bare GUI clicks
+- `UNRAID_SCRIPTS_ASCII=1` — fall back to ASCII glyphs (`v x ! > o ->`) on limited terminals
+- `NO_COLOR=1` — disable ANSI colors
+
+Each real script also has manual controls: `--check-update` (report version delta) and `--self-update` (fetch + install now).
+
+Bootstrap files:
+- [`DeepScanScriptClaude/bootstrap.sh`](DeepScanScriptClaude/bootstrap.sh)
+- [`hardware-stress-test/bootstrap.sh`](hardware-stress-test/bootstrap.sh)
+- [`immich-backup/bootstrap.sh`](immich-backup/bootstrap.sh)
+- [`nvidia-healthcheck/bootstrap.sh`](nvidia-healthcheck/bootstrap.sh)
+
 ## Scripts
 
 ### [`DeepScanScriptClaude/`](DeepScanScriptClaude) — read-only fleet storage-scan
