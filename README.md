@@ -31,6 +31,12 @@ Deep-scans `/mnt/user` — top dirs and files, age histogram, duplicate finder, 
 
 Checks whether the Nvidia GPU driver is loaded and communicating (`nvidia-smi`) and fires an Unraid notification if it isn't — catching the case where the Nvidia-Driver plugin (ich777) silently fails to rebind its kernel module after an Unraid OS update, which otherwise shows up as GPU-dependent containers (e.g. Plex hardware transcoding) failing with an opaque error. Runs at array start; see [nvidia-healthcheck/README.md](nvidia-healthcheck/README.md) for how it works and install steps.
 
+### [`immich-backup/`](immich-backup) — stop-the-stack Immich backup for Unraid
+
+Backs up an Immich stack the safe way: **stop the containers → snapshot the photos share + the appdata tree + the compose file → restart the stack → rotate**. Because the containers are stopped during the copy, the Postgres data files are quiescent and the archive is a consistent restore-point without a live `pg_dump`. Grandfather–Father–Son retention (default 7 daily / 4 weekly / 6 monthly) keeps [`DeepScanScriptClaude`](DeepScanScriptClaude)'s stale-backup warning quiet without unbounded disk use.
+
+The **one line of code that matters** is the EXIT/INT/TERM trap that guarantees the stack restarts — Ctrl-C, crash, docker error, anything. Exit code `3` is reserved for the case where that restart itself fails so the notification is unambiguous. First live run on 2026-08-18: 425 GB rsync of 129,627 photo files in 1h 30m, stack stopped and restarted 4/4 cleanly, manifest sha256 verified — the trap-based restart is proven on real hardware. `--restore` remains deliberately stubbed until we've depended on the backup for a real recovery. See [immich-backup/README.md](immich-backup/README.md).
+
 ### [`hardware-stress-test/`](hardware-stress-test) — CPU + RAM stress test with crash forensics
 
 Stress-tests CPU and RAM using **only what ships with Unraid** — no Nerd Tools (deprecated), no package installs, no Docker (it uses `stress-ng` only if you already have it). Three phases: CPU, RAM write/verify, then both together, in Quick / Standard / Burn-in profiles.
