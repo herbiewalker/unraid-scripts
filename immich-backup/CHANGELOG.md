@@ -5,6 +5,29 @@ version numbers follow [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-08-19
+
+### Added
+- **Interactive setup TUI** (review-and-confirm screen). Shown on TTY runs of
+  `MODE=run`; lists host, dest, sources, include toggles, retention, preflight
+  thresholds, and the stop-restart plan; ENTER proceeds, `q`/ESC cancels.
+  Skipped on non-TTY runs, `--no-tui`, or `--confirm`.
+- **GUI → terminal handoff.** A bare User Scripts click (no TTY + no flags)
+  heading for `MODE=run` now prints the "open a terminal and run this" block
+  and fires an Unraid notification instead of silently kicking off a real
+  backup. Read-only modes (`--list`, `--remind`, `--preflight-only`,
+  `--dry-run`, `--verify`) all bypass the handoff. Env-var opt-out:
+  `UNRAID_SCRIPTS_NO_HANDOFF=1`.
+- **Self-updater.** `--self-update` fetches the latest `script.sh` from GitHub
+  raw, `bash -n`-checks it, replaces self, and fires a version-bump
+  notification. `--check-update` reports the local/remote version delta.
+- **`bootstrap.sh`** you paste into User Scripts once; each run pulls the
+  latest script from GitHub (rate-limited to once an hour), syntax-checks,
+  caches to flash, execs. Falls back to the cached copy if offline.
+
+### Changed
+- `notify_unraid` subject is now `[<host>] <subject>` for fleet clarity.
+
 ## [0.1.5] — 2026-08-18
 
 ### Added

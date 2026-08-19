@@ -19,8 +19,13 @@ set -uo pipefail
 # set -e intentionally OFF: a phase must be able to fail without killing
 # the cleanup trap that restarts the Immich stack.
 
-VERSION="0.1.5"
+VERSION="0.2.0"
 TOOL="immich-backup"
+
+# ---- self-update source (see --self-update / --check-update) --------------
+UPDATE_REPO="herbiewalker/unraid-scripts"
+UPDATE_BRANCH="main"
+UPDATE_URL="https://raw.githubusercontent.com/${UPDATE_REPO}/${UPDATE_BRANCH}/${TOOL}/script.sh"
 
 # --- defaults (overridable by flags; --dest is required for --run) --------
 DEFAULT_SRC_PHOTOS="/mnt/user/immich/immich/photos"
@@ -92,9 +97,171 @@ ok()    { log "  ${C_GRN}✓${C_RESET} $*"; }
 notify_unraid() {
     local subj="$1" desc="$2" icon="${3:-normal}"
     [ -x /usr/local/emhttp/webGui/scripts/notify ] || return 0
+    local h; h=$(hostname 2>/dev/null || echo unknown)
     /usr/local/emhttp/webGui/scripts/notify \
-        -e "${TOOL}" -s "$subj" -d "$desc" -i "$icon" 2>/dev/null
+        -e "${TOOL}" -s "[$h] $subj" -d "$desc" -i "$icon" 2>/dev/null
     return 0
+}
+
+self_path() { local p="${BASH_SOURCE[0]:-$0}"; readlink -f "$p" 2>/dev/null || printf '%s' "$p"; }
+
+_script_version_of() {
+    grep -oE '^(SCRIPT_VERSION|VERSION)="[0-9]+\.[0-9]+\.[0-9]+"' "$1" 2>/dev/null \
+        | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+'
+}
+
+check_update() {
+    local tmp; tmp=$(mktemp 2>/dev/null) || tmp="/tmp/${TOOL}.check.$$"
+    if ! curl -fsSL --max-time 15 "$UPDATE_URL" -o "$tmp" 2>/dev/null; then
+        printf '  %s✗%s could not reach %s\n' "$C_YEL" "$C_RESET" "$UPDATE_URL"
+        rm -f "$tmp"; return 1
+    fi
+    local remote; remote=$(_script_version_of "$tmp"); rm -f "$tmp"
+    if [ -z "$remote" ]; then
+        printf '  %s⚠%s remote fetched but version not parseable\n' "$C_YEL" "$C_RESET"
+        return 1
+    fi
+    printf '  local:  %s\n' "$VERSION"
+    printf '  remote: %s\n' "$remote"
+    if [ "$VERSION" = "$remote" ]; then
+        printf '  %s✓%s up to date\n' "$C_GRN" "$C_RESET"
+    else
+        printf '  %s▶%s new version available — run: %s --self-update\n' \
+            "$C_YEL" "$C_RESET" "$(self_path)"
+    fi
+    return 0
+}
+
+self_update() {
+    local target; target=$(self_path)
+    if [ ! -w "$target" ] && [ ! -w "$(dirname "$target")" ]; then
+        printf '  %s✗%s cannot write %s — need root\n' "$C_RED" "$C_RESET" "$target" >&2
+        return 1
+    fi
+    local tmp; tmp=$(mktemp 2>/dev/null) || tmp="/tmp/${TOOL}.upd.$$"
+    printf '  fetching %s ...\n' "$UPDATE_URL"
+    if ! curl -fsSL --max-time 30 "$UPDATE_URL" -o "$tmp"; then
+        printf '  %s✗%s fetch failed\n' "$C_RED" "$C_RESET" >&2
+        rm -f "$tmp"; return 1
+    fi
+    if ! bash -n "$tmp" 2>/dev/null; then
+        printf '  %s✗%s downloaded file failed bash -n; keeping current copy\n' \
+            "$C_RED" "$C_RESET" >&2
+        rm -f "$tmp"; return 1
+    fi
+    local new_ver; new_ver=$(_script_version_of "$tmp")
+    if [ -z "$new_ver" ]; then
+        printf '  %s✗%s downloaded file has no parseable VERSION; refusing\n' \
+            "$C_RED" "$C_RESET" >&2
+        rm -f "$tmp"; return 1
+    fi
+    install -m 0755 "$tmp" "$target"
+    rm -f "$tmp"
+    printf '  %s✓%s updated: %s → %s  (%s)\n' \
+        "$C_GRN" "$C_RESET" "$VERSION" "$new_ver" "$target"
+    notify_unraid "Updated to v$new_ver" \
+        "$TOOL updated from v$VERSION to v$new_ver via --self-update (source: $UPDATE_REPO@$UPDATE_BRANCH)." \
+        "normal"
+    return 0
+}
+
+# GUI → terminal handoff. Fires ONLY when MODE=="run" AND no TTY AND no args
+# — a bare User Scripts click. --list / --remind / --preflight-only / --dry-run
+# / --verify / --restore all set MODE≠run and thus bypass the handoff, so
+# scheduled cron/User-Scripts jobs and read-only ops keep working non-
+# interactively. Set UNRAID_SCRIPTS_NO_HANDOFF=1 to silence.
+handoff_to_terminal() {
+    [ "${UNRAID_SCRIPTS_NO_HANDOFF:-0}" = "1" ] && return 0
+    local self cmd; self=$(self_path); cmd="bash $self --dest $DEST_ROOT"
+    printf '\n'
+    printf '  ────────────────────────────────────────────────────────────\n'
+    printf '  immich-backup is about to STOP THE IMMICH STACK, back it up,\n'
+    printf '  and restart it. That is not something to trigger by accident\n'
+    printf '  from a bare User Scripts click.\n\n'
+    printf '  To run it interactively (with the setup screen):\n'
+    printf '    1. Open a terminal — Unraid webGUI  >_  icon, or SSH\n'
+    printf '    2. Run:  %s\n\n' "$cmd"
+    printf '  Non-interactive (User Scripts / cron / scheduled) — pass a flag:\n'
+    printf '    --preflight-only    check the environment, touch nothing\n'
+    printf '    --dry-run           print every action, touch nothing\n'
+    printf '    --remind            fire the "last backup age" notification\n'
+    printf '    --list              show existing backups\n'
+    printf '    --dest PATH         run the backup (any flag bypasses handoff)\n\n'
+    printf '  To silence this handoff:  UNRAID_SCRIPTS_NO_HANDOFF=1\n'
+    printf '  ────────────────────────────────────────────────────────────\n\n'
+    notify_unraid \
+        "Open a terminal for the interactive setup" \
+        "$TOOL was launched from User Scripts with no flags. Open the Unraid terminal (or SSH) and run: $cmd — or re-run with --preflight-only / --dry-run / --remind for a safe non-interactive mode." \
+        "normal"
+    return 0
+}
+
+# Interactive setup screen — review + confirm. Not a full editor (all fields
+# have --flag equivalents); this is a "these are the settings I would run
+# with, press ENTER to proceed or q to cancel" screen. Shown only for MODE=run
+# with a real TTY and --no-tui not set.
+#
+# Width discipline (same rule as banner()): _row measures padding from the
+# plain-ASCII STENCIL string, prints the COLOURED one. The two must have
+# identical visual width — bold escapes add bytes but no glyphs.
+_row() {
+    local stencil="$1" colored="$2"
+    local n=$(( BOX_W + 2 - ${#stencil} )); [ $n -lt 0 ] && n=0
+    printf '%s│%s%s%*s%s│%s\n' \
+        "$C_CYN" "$C_RESET" "$colored" "$n" "" "$C_CYN" "$C_RESET"
+}
+setup_tui() {
+    [ "$NO_TUI" = "1" ] && return 0
+    [ -t 0 ] && [ -t 1 ] || return 0
+    local hor; hor=$(printf '─%.0s' $(seq 1 $((BOX_W+2))))
+    local yn_p=$([ $DO_PHOTOS = 1 ] && echo yes || echo NO)
+    local yn_a=$([ $DO_APPDATA = 1 ] && echo yes || echo NO)
+    local yn_c=$([ $DO_COMPOSE = 1 ] && echo yes || echo NO)
+    local strict=$([ $STRICT_SPACE = 1 ] && echo yes || echo no)
+    local stack_stencil stack_colored
+    if [ $SKIP_STOP = 1 ]; then
+        stack_stencil="  STACK        will NOT STOP (--skip-stop set — inconsistent DB!)"
+        stack_colored="  ${C_BOLD}STACK${C_RESET}        will ${C_RED}NOT STOP (--skip-stop set — inconsistent DB!)${C_RESET}"
+    else
+        stack_stencil="  STACK        will stop + restart via trap"
+        stack_colored="  ${C_BOLD}STACK${C_RESET}        will stop + restart via trap"
+    fi
+    printf '\n%s╭%s╮%s\n' "$C_CYN" "$hor" "$C_RESET"
+    _row " ${TOOL} v${VERSION}  ·  interactive setup" \
+         "${C_BOLD} ${TOOL} v${VERSION}  ·  interactive setup${C_RESET}"
+    printf '%s├%s┤%s\n' "$C_CYN" "$hor" "$C_RESET"
+    _row "  HOST         ${DEMO_HOST}  ·  Unraid ${DEMO_UNRAID}  ·  ${DEMO_RAM}" \
+         "  ${C_BOLD}HOST${C_RESET}         ${DEMO_HOST}  ·  Unraid ${DEMO_UNRAID}  ·  ${DEMO_RAM}"
+    printf '%s├%s┤%s\n' "$C_CYN" "$hor" "$C_RESET"
+    _row "  DEST         ${DEST_ROOT}" \
+         "  ${C_BOLD}DEST${C_RESET}         ${DEST_ROOT}"
+    _row "  SOURCES      photos=${SRC_PHOTOS}" \
+         "  ${C_BOLD}SOURCES${C_RESET}      photos=${SRC_PHOTOS}"
+    _row "               appdata=${SRC_APPDATA}" \
+         "               appdata=${SRC_APPDATA}"
+    _row "               compose=${COMPOSE_DIR}" \
+         "               compose=${COMPOSE_DIR}"
+    _row "  INCLUDE      photos=${yn_p}   appdata=${yn_a}   compose=${yn_c}" \
+         "  ${C_BOLD}INCLUDE${C_RESET}      photos=${yn_p}   appdata=${yn_a}   compose=${yn_c}"
+    _row "  RETENTION    daily=${KEEP_DAILY}   weekly=${KEEP_WEEKLY}   monthly=${KEEP_MONTHLY}" \
+         "  ${C_BOLD}RETENTION${C_RESET}    daily=${KEEP_DAILY}   weekly=${KEEP_WEEKLY}   monthly=${KEEP_MONTHLY}"
+    _row "  PREFLIGHT    min-free=${MIN_FREE_GB} GB   strict-space=${strict}" \
+         "  ${C_BOLD}PREFLIGHT${C_RESET}    min-free=${MIN_FREE_GB} GB   strict-space=${strict}"
+    _row "$stack_stencil" "$stack_colored"
+    printf '%s├%s┤%s\n' "$C_CYN" "$hor" "$C_RESET"
+    _row "  ENTER proceed   ·   q or ESC cancel   ·   changes: re-run with --flag" \
+         "  ${C_DIM}ENTER proceed   ·   q or ESC cancel   ·   changes: re-run with --flag${C_RESET}"
+    printf '%s╰%s╯%s\n\n' "$C_CYN" "$hor" "$C_RESET"
+
+    local k _rest
+    while :; do
+        IFS= read -rsn1 k 2>/dev/null || return 0
+        case "$k" in
+            ''|$'\n')  return 0 ;;
+            q|Q)       printf 'cancelled\n'; exit 0 ;;
+            $'\033')   read -rsn2 -t 0.05 _rest 2>/dev/null; printf 'cancelled\n'; exit 0 ;;
+        esac
+    done
 }
 
 # =========================================================================
@@ -176,6 +343,8 @@ parse_args() {
             --confirm)        CONFIRM=1 ;;
             --strict-space)   STRICT_SPACE=1 ;;
             --min-free-gb)    MIN_FREE_GB="${2:-}"; shift ;;
+            --self-update)    self_update;  exit $? ;;
+            --check-update)   check_update; exit $? ;;
             --version)        echo "${TOOL} v${VERSION}"; exit 0 ;;
             *) err "unknown flag: $1"; usage >&2; exit 1 ;;
         esac
@@ -851,12 +1020,26 @@ run_backup() {
 }
 
 main() {
+    local raw_argc=$#
     parse_args "$@"
     case "$MODE" in
         help) usage; exit 0 ;;
     esac
 
     demo_collect
+
+    # Handoff: bare User Scripts click (no TTY + no args) heading for a real
+    # backup run is the dangerous case. Any flag — including read-only modes —
+    # bypasses this. Env-var UNRAID_SCRIPTS_NO_HANDOFF=1 disables globally.
+    if [ "$MODE" = "run" ] && { [ ! -t 0 ] || [ ! -t 1 ]; } && [ "$raw_argc" -eq 0 ]; then
+        handoff_to_terminal
+        exit 0
+    fi
+
+    # Interactive review-and-confirm screen for real backup runs on a TTY.
+    if [ "$MODE" = "run" ] && [ "$CONFIRM" != "1" ]; then
+        setup_tui
+    fi
 
     case "$MODE" in
         list)

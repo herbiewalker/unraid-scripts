@@ -5,9 +5,28 @@ restart stack → GFS rotate. Single bash file, drops into User Scripts. Sibling
 [`../DeepScanScriptClaude`](../DeepScanScriptClaude) and
 [`../hardware-stress-test`](../hardware-stress-test) in the same repo.
 
-Current version: **v0.1.4** · **first live run on server-b 2026-08-18** (rung 5 climbed: 425 GB
-rsync + trap-based stack restart both verified live). See [HANDOFF.md](HANDOFF.md) for current
+Current version: **v0.2.0** (see [CHANGELOG.md](CHANGELOG.md)). v0.1.5's live-run
+credentials still hold: rung 5 verified live on server-b 2026-08-18 (425 GB
+rsync + trap-based stack restart). See [HANDOFF.md](HANDOFF.md) for current
 state and roadmap.
+
+## Modernization pass (v0.2.0)
+
+- Interactive review-and-confirm TUI (`setup_tui`) for MODE=run on a TTY.
+- GUI → terminal handoff for a bare User Scripts click (MODE=run + no TTY +
+  no flags). Read-only modes bypass. `UNRAID_SCRIPTS_NO_HANDOFF=1` disables.
+- `--self-update` / `--check-update` — self-hosted updater; also a sibling
+  `bootstrap.sh` for User-Scripts-side auto-update on every run.
+- `notify_unraid` subject is host-prefixed `[<host>] ...` for fleet clarity.
+
+## Destructive-op audit — updated
+
+`grep -nE '\b(rm|mv|dd)\b' script.sh` now shows several new `rm -f "$tmp"`
+lines inside `self_update` / `check_update`. Every one targets a `mktemp`'d
+file under `/tmp`. `install -m 0755 "$tmp" "$target"` inside `self_update`
+writes to `/boot/...` — the ONLY write outside `$DEST_ROOT`/`$LOCKFILE`, and
+gated behind an explicit `--self-update` flag. These are documented
+exceptions to the "writes only to `--dest` and `/var/lock`" rule.
 
 ## Files
 
