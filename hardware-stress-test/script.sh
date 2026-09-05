@@ -1297,6 +1297,32 @@ self_update() {
 }
 
 # ============================================================
+# Brand mark — herbiewalker (inlined from DevPlaybook/templates/brand).
+# Keep in sync with https://github.com/herbiewalker/DevPlaybook/tree/main/templates/brand
+# Single-file constraint means we can't source it; the block is 10 lines,
+# tolerable duplication for the identity to travel with the script.
+# ============================================================
+BRAND_SIGIL="⏣"
+BRAND_MARK_SMALL="⏣ HW ⏣"
+BRAND_TAGLINE="code · tools · homelab"
+
+brand_banner_modern() {
+  [ -t 1 ] || return 0
+  local R="" C="" Y="" S="" B="" D=""
+  if [ -z "${NO_COLOR:-}" ]; then
+    R=$'\033[0m';  C=$'\033[36m'; Y=$'\033[33m'
+    S=$'\033[32m'; B=$'\033[1m';  D=$'\033[2m'
+  fi
+  echo "${C}┌─────────────────────────────────────────────────────────────────┐${R}"
+  echo "${C}│                                                                 │${R}"
+  echo "${C}│    ${B}█ █    █ █${R}                                                   ${C}│${R}"
+  echo "${C}│    ${B}█▀█    █▄█${R} ${Y}──●──●──${S}${BRAND_SIGIL}${R}   ${B}herbiewalker${R}                          ${C}│${R}"
+  echo "${C}│    ${B}█ █    ▀ ▀${R}                        ${D}${BRAND_TAGLINE}${R}     ${C}│${R}"
+  echo "${C}│                                                                 │${R}"
+  echo "${C}└─────────────────────────────────────────────────────────────────┘${R}"
+}
+
+# ============================================================
 # Modernized banner — stdout-only (no log tee), rendered from DEMO_* globals.
 # Adds visual polish to the terminal without polluting the flash log file.
 # Called from main() BEFORE the say-block STARTING banner (which still goes
@@ -1410,6 +1436,7 @@ main() {
   MCE_START=$(mce_count)
   THROTTLE_START=$(throttle_sum)
   demo_collect
+  brand_banner_modern
   print_banner_modern
 
   say "================================================================"

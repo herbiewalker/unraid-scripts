@@ -21,6 +21,12 @@ set -u
 VERSION="0.2.0"
 TOOL="nvidia-healthcheck"
 
+# Brand mark — herbiewalker. Sigil goes in the notification subject so
+# alerts on the phone show the mark. No banner here — this script runs
+# silently as a cron; a banner would only spam the log. Keep in sync with
+# https://github.com/herbiewalker/DevPlaybook/tree/main/templates/brand
+BRAND_SIGIL="⏣"
+
 UPDATE_REPO="herbiewalker/unraid-scripts"
 UPDATE_BRANCH="main"
 UPDATE_URL="https://raw.githubusercontent.com/${UPDATE_REPO}/${UPDATE_BRANCH}/${TOOL}/script.sh"
@@ -31,7 +37,7 @@ HOST=$(hostname 2>/dev/null || echo unknown)
 
 alert() {
   /usr/local/emhttp/webGui/scripts/notify \
-    -e "$TOOL" -s "[$HOST] $1" -d "$2" -i "alert"
+    -e "$TOOL" -s "${BRAND_SIGIL} [$HOST] $1" -d "$2" -i "alert"
 }
 
 self_path() { local p="${BASH_SOURCE[0]:-$0}"; readlink -f "$p" 2>/dev/null || printf '%s' "$p"; }

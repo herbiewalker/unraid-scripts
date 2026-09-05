@@ -1019,6 +1019,31 @@ run_backup() {
     return $phase_rc
 }
 
+# ============================================================
+# Brand mark — herbiewalker (inlined from DevPlaybook/templates/brand).
+# Keep in sync with https://github.com/herbiewalker/DevPlaybook/tree/main/templates/brand
+# Self-contained: doesn't depend on this script's palette.
+# ============================================================
+BRAND_SIGIL="⏣"
+BRAND_MARK_SMALL="⏣ HW ⏣"
+BRAND_TAGLINE="code · tools · homelab"
+
+brand_banner_modern() {
+    [ -t 1 ] || return 0
+    local R="" C="" Y="" S="" B="" D=""
+    if [ -z "${NO_COLOR:-}" ]; then
+        R=$'\033[0m';  C=$'\033[36m'; Y=$'\033[33m'
+        S=$'\033[32m'; B=$'\033[1m';  D=$'\033[2m'
+    fi
+    echo "${C}┌─────────────────────────────────────────────────────────────────┐${R}"
+    echo "${C}│                                                                 │${R}"
+    echo "${C}│    ${B}█ █    █ █${R}                                                   ${C}│${R}"
+    echo "${C}│    ${B}█▀█    █▄█${R} ${Y}──●──●──${S}${BRAND_SIGIL}${R}   ${B}herbiewalker${R}                          ${C}│${R}"
+    echo "${C}│    ${B}█ █    ▀ ▀${R}                        ${D}${BRAND_TAGLINE}${R}     ${C}│${R}"
+    echo "${C}│                                                                 │${R}"
+    echo "${C}└─────────────────────────────────────────────────────────────────┘${R}"
+}
+
 main() {
     local raw_argc=$#
     parse_args "$@"
@@ -1027,6 +1052,7 @@ main() {
     esac
 
     demo_collect
+    brand_banner_modern
 
     # Handoff: bare User Scripts click (no TTY + no args) heading for a real
     # backup run is the dangerous case. Any flag — including read-only modes —

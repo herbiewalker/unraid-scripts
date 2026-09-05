@@ -452,6 +452,32 @@ _pf_passed="true"
 # Banner
 # ============================================================
 demo_collect
+
+# ============================================================
+# Brand mark — herbiewalker (inlined from DevPlaybook/templates/brand).
+# Keep in sync with https://github.com/herbiewalker/DevPlaybook/tree/main/templates/brand
+# Self-contained: doesn't depend on this script's palette.
+# ============================================================
+BRAND_SIGIL="⏣"
+BRAND_MARK_SMALL="⏣ HW ⏣"
+BRAND_TAGLINE="code · tools · homelab"
+
+brand_banner_modern() {
+  [ -t 1 ] || return 0
+  local R="" C="" Y="" S="" B="" D=""
+  if [ -z "${NO_COLOR:-}" ]; then
+    R=$'\033[0m';  C=$'\033[36m'; Y=$'\033[33m'
+    S=$'\033[32m'; B=$'\033[1m';  D=$'\033[2m'
+  fi
+  echo "${C}┌─────────────────────────────────────────────────────────────────┐${R}"
+  echo "${C}│                                                                 │${R}"
+  echo "${C}│    ${B}█ █    █ █${R}                                                   ${C}│${R}"
+  echo "${C}│    ${B}█▀█    █▄█${R} ${Y}──●──●──${S}${BRAND_SIGIL}${R}   ${B}herbiewalker${R}                          ${C}│${R}"
+  echo "${C}│    ${B}█ █    ▀ ▀${R}                        ${D}${BRAND_TAGLINE}${R}     ${C}│${R}"
+  echo "${C}│                                                                 │${R}"
+  echo "${C}└─────────────────────────────────────────────────────────────────┘${R}"
+}
+
 # Modernized stdout-only banner (TTY runs get colour + box; log file stays
 # plain via note() below).
 print_banner_modern() {
@@ -475,6 +501,7 @@ print_banner_modern() {
   printf '%s└' "$_EC_G"; i=0; while [ $i -lt $((w-1)) ]; do printf '─'; i=$((i+1)); done
   printf '─┘%s\n\n' "$_EC_R"
 }
+brand_banner_modern
 print_banner_modern
 note "=================================================================="
 note " DeepScanScriptClaude v${SCRIPT_VERSION} — read-only storage scan"
