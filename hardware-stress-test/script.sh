@@ -75,7 +75,7 @@ set -o pipefail
 # set -e is intentionally OFF (repo convention): a phase must be able to fail
 # without killing the run, because a partial result is still evidence.
 
-SCRIPT_VERSION="0.3.0"
+SCRIPT_VERSION="0.4.0"
 TOOL="hardware-stress-test"
 
 # ---- self-update source (see --self-update / --check-update) --------------
@@ -875,15 +875,18 @@ tui_show()  { [ -t 1 ] && printf '\033[?25h'; return 0; }
 tui_clear() { printf '\033[2J\033[H'; }
 tui_home()  { printf '\033[H'; }
 
-row() { local pad=$(( W - ${#1} )); [ "$pad" -lt 0 ] && pad=0; printf '│%s%*s│\n' "$1" "$pad" ""; }
+# Border color — one place to change the look. Uncoloured under NO_COLOR.
+C_BRD="$C_CYA"
+
+row() { local pad=$(( W - ${#1} )); [ "$pad" -lt 0 ] && pad=0; printf '%s│%s%s%*s%s│%s\n' "$C_BRD" "$C_RESET" "$1" "$pad" "" "$C_BRD" "$C_RESET"; }
 rowc() {
   local stencil="$1" colored="$2"
   local pad=$(( W - ${#stencil} )); [ "$pad" -lt 0 ] && pad=0
-  printf '│%s%*s│\n' "$colored" "$pad" ""
+  printf '%s│%s%s%*s%s│%s\n' "$C_BRD" "$C_RESET" "$colored" "$pad" "" "$C_BRD" "$C_RESET"
 }
-rule()  { printf '├'; local i=0; while [ $i -lt $W ]; do printf '─'; i=$((i+1)); done; printf '┤\n'; }
-rule_t() { printf '┌'; local i=0; while [ $i -lt $W ]; do printf '─'; i=$((i+1)); done; printf '┐\n'; }
-rule_b() { printf '└'; local i=0; while [ $i -lt $W ]; do printf '─'; i=$((i+1)); done; printf '┘\n'; }
+rule()  { printf '%s├' "$C_BRD"; local i=0; while [ $i -lt $W ]; do printf '─'; i=$((i+1)); done; printf '┤%s\n' "$C_RESET"; }
+rule_t() { printf '%s╭' "$C_BRD"; local i=0; while [ $i -lt $W ]; do printf '─'; i=$((i+1)); done; printf '╮%s\n' "$C_RESET"; }
+rule_b() { printf '%s╰' "$C_BRD"; local i=0; while [ $i -lt $W ]; do printf '─'; i=$((i+1)); done; printf '╯%s\n' "$C_RESET"; }
 
 TUI_FIELDS=(profile p1 p2 p3 ram temp hb engine)
 TUI_CUR=0
@@ -963,9 +966,25 @@ tui_toggle() {
 sel() { [ "${TUI_FIELDS[$TUI_CUR]}" = "$1" ] && printf '%s' "$C_INV" || printf ''; }
 chk() { [ "$1" = 1 ] && printf 'x' || printf ' '; }
 
+# Per-field hint shown next to the runtime estimate. Plain ASCII only so the
+# stencil-width math stays honest.
+tui_help() {
+  case "$1" in
+    profile) printf 'cycle Quick / Standard / Burn-in' ;;
+    p1)      printf '+/- 5 min CPU   space toggles phase' ;;
+    p2)      printf '+/- 5 min RAM   space toggles phase' ;;
+    p3)      printf '+/- 5 min combo space toggles phase' ;;
+    ram)     printf '+/- 1 GB (auto ~ half of RAM)' ;;
+    temp)    printf '+/- 1 C thermal abort ceiling' ;;
+    hb)      printf '+/- 5 s heartbeat cadence' ;;
+    engine)  printf 'auto -> builtin -> stress-ng' ;;
+    *)       printf '' ;;
+  esac
+}
+
 tui_render() {
   tui_home
-  local ram_disp ram_note eng_note
+  local ram_disp ram_note eng_note title host_line arr_stencil arr_colored help
   if [ "$RAM_TEST_GB" = "auto" ]; then ram_disp="auto"; else ram_disp="${RAM_TEST_GB}"; fi
   ram_note="$(effective_ram_gb) G   ($(ram_total_gb) G total, shm free $(shm_avail_gb) G)"
   case "$ENGINE" in
@@ -977,7 +996,22 @@ tui_render() {
   ram_note=$(clip "$ram_note" 37)
   eng_note=$(clip "$eng_note" 34)
 
+  # Title + host strip — plain ASCII only (see stencil-width rule at the top
+  # of this block; multi-byte separators like the middle dot would need equal
+  # visual width in the stencil, which byte-length math cannot guarantee).
+  title=" ${TOOL} v${SCRIPT_VERSION}   interactive setup"
+  host_line=$(clip "  HOST   ${DEMO_HOST:-?}   Unraid ${DEMO_UNRAID:-?}   ${DEMO_CORES:-?}c   ${DEMO_RAM:-?} RAM" $W)
+
   rule_t
+  rowc "$title" "${C_BOLD}${C_CYA}${title}${C_RESET}"
+  rule
+  rowc "$host_line" "$host_line"
+  if [ "$OVERRIDE_ARRAY" = 1 ]; then
+    arr_stencil="  ARRAY  override ON  (a to disable)   lockup risks data"
+    arr_colored="  ${C_BOLD}${C_YEL}ARRAY${C_RESET}  ${C_YEL}override ON${C_RESET}  (a to disable)   ${C_DIM}lockup risks data${C_RESET}"
+    rowc "$arr_stencil" "$arr_colored"
+  fi
+  rule
   row ""
   rowc "  PROFILE    < $(printf '%-8s' "$PROFILE") >    Quick . Standard . Burn-in . Custom" \
        "  ${C_BOLD}PROFILE${C_RESET}    $(sel profile)< $(printf '%-8s' "$PROFILE") >${C_RESET}    ${C_DIM}Quick . Standard . Burn-in . Custom${C_RESET}"
@@ -990,35 +1024,43 @@ tui_render() {
   rowc "    [$(chk $PHASE3_ON)]  3  CPU + RAM              $(printf '%3d' $COMBO_MINUTES) min" \
        "    $(sel p3)[$(chk $PHASE3_ON)]  3  CPU + RAM              $(printf '%3d' $COMBO_MINUTES) min${C_RESET}"
   row ""
-  rowc "  RAM test size   < $(printf '%4s' "$ram_disp") >    $ram_note" \
-       "  RAM test size   $(sel ram)< $(printf '%4s' "$ram_disp") >${C_RESET}    ${C_DIM}${ram_note}${C_RESET}"
-  rowc "  Abort at        < $(printf '%4d' $TEMP_ABORT) > C" \
-       "  Abort at        $(sel temp)< $(printf '%4d' $TEMP_ABORT) >${C_RESET} C"
-  rowc "  Heartbeat       < $(printf '%4d' $HEARTBEAT_SEC) > s" \
-       "  Heartbeat       $(sel hb)< $(printf '%4d' $HEARTBEAT_SEC) >${C_RESET} s"
-  rowc "  Load engine     < $(printf '%-9s' "$ENGINE") >  $eng_note" \
-       "  Load engine     $(sel engine)< $(printf '%-9s' "$ENGINE") >${C_RESET}  ${C_DIM}${eng_note}${C_RESET}"
+  rowc "  TUNING" "  ${C_BOLD}TUNING${C_RESET}"
+  rowc "    RAM test size < $(printf '%4s' "$ram_disp") >   $ram_note" \
+       "    RAM test size $(sel ram)< $(printf '%4s' "$ram_disp") >${C_RESET}   ${C_DIM}${ram_note}${C_RESET}"
+  rowc "    Abort at      < $(printf '%4d' $TEMP_ABORT) > C" \
+       "    Abort at      $(sel temp)< $(printf '%4d' $TEMP_ABORT) >${C_RESET} C"
+  rowc "    Heartbeat     < $(printf '%4d' $HEARTBEAT_SEC) > s" \
+       "    Heartbeat     $(sel hb)< $(printf '%4d' $HEARTBEAT_SEC) >${C_RESET} s"
+  rowc "    Load engine   < $(printf '%-9s' "$ENGINE") >  $eng_note" \
+       "    Load engine   $(sel engine)< $(printf '%-9s' "$ENGINE") >${C_RESET}  ${C_DIM}${eng_note}${C_RESET}"
   row ""
   rule
-  rowc " PREFLIGHT" " ${C_BOLD}PREFLIGHT${C_RESET}"
+  rowc "  PREFLIGHT" "  ${C_BOLD}PREFLIGHT${C_RESET}"
 
   preflight
   local n kind text col mark
   for n in "${PREFLIGHT_NOTES[@]}"; do
     kind="${n%%|*}"; text="${n#*|}"
     case "$kind" in
-      OK)    col="$C_GRN"; mark="v" ;;
-      WARN)  col="$C_YEL"; mark="!" ;;
-      FATAL) col="$C_RED"; mark="x" ;;
+      OK)    col="$C_GRN"; mark="$G_DOT" ;;
+      WARN)  col="$C_YEL"; mark="$G_WARN" ;;
+      FATAL) col="$C_RED"; mark="$G_BAD" ;;
     esac
-    rowc "  $mark $text" "  ${col}${mark}${C_RESET} $text"
+    # Same glyph in stencil and colored → identical byte + codepoint count,
+    # so pad math holds whether bash counts bytes (C locale) or codepoints.
+    rowc "   $mark $text" "   ${col}${mark}${C_RESET} $text"
   done
   rule
   local est; est=$(fmt_hm "$(est_runtime_min)")
-  rowc "  Est. runtime  $(printf '%-10s' "$est")  up/dn move  l/r change  ENTER start" \
-       "  Est. runtime  ${C_BOLD}$(printf '%-10s' "$est")${C_RESET}  ${C_DIM}up/dn move  l/r change  ENTER start${C_RESET}"
+  help=$(clip "$(tui_help "${TUI_FIELDS[$TUI_CUR]}")" 34)
+  rowc "  Est. runtime  $(printf '%-10s' "$est")  $help" \
+       "  Est. runtime  ${C_BOLD}$(printf '%-10s' "$est")${C_RESET}  ${C_DIM}${help}${C_RESET}"
+  rowc "  up/dn move  l/r change  space toggle  a array  ENTER start  q" \
+       "  ${C_DIM}up/dn move  l/r change  space toggle  a array  ENTER start  q${C_RESET}"
   rule_b
-  printf '%s  space toggle phase - a override array - q quit%s\033[K\n' "$C_DIM" "$C_RESET"
+  # Wipe any trailing junk from a previous, taller frame (over-temp / no-phase
+  # error line printed below rule_b, or a preflight that shrank between frames).
+  printf '\033[J'
 }
 
 tui_run() {

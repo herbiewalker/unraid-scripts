@@ -4,10 +4,27 @@ CPU + RAM stress test for Unraid, built around crash forensics and the hardware'
 own error counters rather than a pass/fail score. Runs via the User Scripts plugin,
 or directly from a terminal for the interactive setup screen.
 
-Current version: **v0.3.0** (see modernization notes below). v0.2.2's first
+Current version: **v0.4.0** (see modernization notes below). v0.2.2's first
 live Unraid run (2026-07-25, clean pass; hwmon temp + EDAC-absent detection +
 RAM loop validated — see HANDOFF) still stands as the last live-hardware
 data point.
+
+## TUI polish pass (v0.4.0)
+
+- Rounded cyan border (`╭╮╰╯`, `C_BRD=$C_CYA`), title header row
+  (`hardware-stress-test v${SCRIPT_VERSION}   interactive setup`) and a
+  HOST strip (`HOST · Unraid · cores · RAM`) driven by the `DEMO_*` globals.
+- Fields grouped under `PROFILE / PHASES / TUNING / PREFLIGHT` section
+  headings. `TUNING` collapses RAM/temp/heartbeat/engine rows for scanability.
+- Preflight badges are now colour-coded glyphs (`● G_DOT` green, `⚠ G_WARN`
+  yellow, `✗ G_BAD` red) instead of plain `v/!/x`. Both stencil and coloured
+  string carry the same glyph so pad math stays byte-for-byte identical —
+  the alignment holds whether bash counts bytes (Git-Bash on Windows) or
+  codepoints (Unraid, C.UTF-8).
+- New `tui_help "$field"` — a per-cursor hint next to the runtime estimate
+  (plain ASCII only). If a new field is added, add a matching case.
+- Only touches `\033[J` (erase-below) at the end of `tui_render` to wipe
+  leftover error lines from a previous, taller frame.
 
 ## Modernization pass (v0.3.0)
 

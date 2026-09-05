@@ -1,6 +1,6 @@
 # hardware-stress-test
 
-**v0.3.0** — CPU + RAM stress test for Unraid, built around **crash forensics** and the
+**v0.4.0** — CPU + RAM stress test for Unraid, built around **crash forensics** and the
 hardware's **own error counters** — not a pass/fail score.
 
 ## The problem it solves
@@ -78,21 +78,37 @@ source, ECC presence, array state) and a running time estimate update as you edi
 It won't let you start while a red preflight item is unresolved.
 
 ```
-┌─ hardware-stress-test v0.3.0 ─────────────────────────────────────┐
+╭───────────────────────────────────────────────────────────────────╮
+│ hardware-stress-test v0.4.0   interactive setup                   │
+├───────────────────────────────────────────────────────────────────┤
+│  HOST   server-b   Unraid 7.3.1   8c   64G RAM                    │
+├───────────────────────────────────────────────────────────────────┤
 │  PROFILE    < Standard >    Quick . Standard . Burn-in . Custom   │
+│                                                                   │
 │  PHASES                                                           │
 │    [x]  1  CPU only                45 min                         │
 │    [x]  2  RAM verify              30 min                         │
 │    [x]  3  CPU + RAM               45 min                         │
-│  RAM test size   < auto >    10 G   (32 G total, shm free 16 G)   │
-│  Abort at        <   92 > C                                       │
-├─ PREFLIGHT ───────────────────────────────────────────────────────┤
-│  v CPU temp via hwmon (k10temp)   v ECC/EDAC present (amd64)      │
-│  v array is STOPPED                                               │
+│                                                                   │
+│  TUNING                                                           │
+│    RAM test size < auto >   10 G   (32 G total, shm free 16 G)    │
+│    Abort at      <   92 > C                                       │
+│    Heartbeat     <   15 > s                                       │
+│    Load engine   < auto      >  -> stress-ng detected, will use   │
 ├───────────────────────────────────────────────────────────────────┤
-│  Est. runtime  2h 02m      up/dn move  l/r change  ENTER start    │
-└───────────────────────────────────────────────────────────────────┘
+│  PREFLIGHT                                                        │
+│   ● CPU temp via hwmon (k10temp)                                  │
+│   ● ECC/EDAC present (amd64_edac)                                 │
+│   ⚠ no throttle counters — cannot detect throttling               │
+│   ● array is STOPPED                                              │
+├───────────────────────────────────────────────────────────────────┤
+│  Est. runtime  2h 02m    cycle Quick / Standard / Burn-in         │
+│  up/dn move  l/r change  space toggle  a array  ENTER start  q   │
+╰───────────────────────────────────────────────────────────────────╯
 ```
+
+Colour-coded preflight (● green / ⚠ yellow / ✗ red), a cyan rounded border,
+and the footer hint changes per selected field.
 
 **From Settings → User Scripts — hands you off to a terminal.** The setup screen
 needs a keyboard, and the User Scripts window is a one-way log pane, so the TUI
