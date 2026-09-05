@@ -28,6 +28,14 @@ writes to `/boot/...` — the ONLY write outside `$DEST_ROOT`/`$LOCKFILE`, and
 gated behind an explicit `--self-update` flag. These are documented
 exceptions to the "writes only to `--dest` and `/var/lock`" rule.
 
+## Brand mark
+
+`brand_banner_modern` block inlined right above `main()`, called from
+inside `main()` right after `demo_collect`. Self-contained (defines its
+own ANSI locals so it doesn't collide with this tool's `C_CYN`/etc).
+Canonical source: `DevPlaybook/templates/brand/brand.sh`. Skip on
+non-TTY. Keep in sync when the canonical brand changes.
+
 ## Files
 
 | File | Role |

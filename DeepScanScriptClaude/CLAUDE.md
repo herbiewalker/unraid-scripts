@@ -30,6 +30,14 @@ Current version: **v0.4.0**
 behind an explicit `--self-update` flag. These are documented exceptions to
 the read-only invariant.
 
+## Brand mark
+
+`brand_banner_modern` block inlined right after `demo_collect`, called
+above the existing `print_banner_modern`. Self-contained (defines its
+own ANSI locals so it doesn't collide with `_EC_*`). Canonical source:
+`DevPlaybook/templates/brand/brand.sh`. Skip on non-TTY, same as the
+tool's own banner. Keep in sync when the canonical brand changes.
+
 ## Files
 
 | File | Role |

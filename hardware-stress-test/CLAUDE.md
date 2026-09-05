@@ -46,6 +46,15 @@ writes to `/boot/...` — the ONLY write outside `$SHM_ROOT` / `/boot/logs`,
 gated behind an explicit `--self-update` flag. Both are documented exceptions
 to the "writes only to its own scratch + logs" rule.
 
+## Brand mark
+
+`brand_banner_modern` (~15-line block above `print_banner_modern`) is
+inlined from `../CLAUDE.md`'s canonical source
+(`DevPlaybook/templates/brand/brand.sh`). Called from `main()` right
+before `print_banner_modern` so the identity shows first, then the
+DEMO block. Self-contained (defines its own ANSI locals). Skip on
+non-TTY same as the tool's own banner.
+
 ## Files
 
 | File | Role |
