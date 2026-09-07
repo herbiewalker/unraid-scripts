@@ -1,4 +1,16 @@
 #!/bin/bash
+# ╭──────────────────────────────────────────────────────────────────╮
+# │  ┌●───●───●───●───●───●───●───●───●───●───●───●───●───●───●───┐  │
+# │  │                                                            │  │
+# │  ●   ██╗  ██╗    ██╗    ██╗                                   ●  │
+# │  │   ██║  ██║    ██║    ██║           herbiewalker            │  │
+# │  │   ███████║    ██║ █╗ ██║──●──●──●──┐                       │  │
+# │  │   ██╔══██║    ██║███╗██║           │                       │  │
+# │  ●   ██║  ██║    ╚███╔███╔╝           ●───⏣  code · tools     ●  │
+# │  │   ╚═╝  ╚═╝     ╚══╝╚══╝                    homelab         │  │
+# │  │                                                            │  │
+# │  └●───●───●───●───●───●───●───●───●───●───●───●───●───●───●───┘  │
+# ╰──────────────────────────────────────────────────────────────────╯
 #
 # Nvidia GPU Health Check v0.2.0 — notifies via Unraid's built-in system
 # if the Nvidia driver isn't loaded/communicating (common right
@@ -126,3 +138,5 @@ fi
 #     -d "Nvidia driver is fine, but the Plex container isn't up. Check manually." \
 #     -i "warning"
 # fi
+
+# ⏣ HW ⏣ · code · tools · homelab · ⏣ HW ⏣
