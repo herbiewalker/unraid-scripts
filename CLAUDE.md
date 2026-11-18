@@ -1,6 +1,6 @@
 # unraid-scripts — Repo Context
 
-Four self-contained bash tools for Unraid, each in its own subdirectory:
+Five self-contained bash tools for Unraid, each in its own subdirectory:
 
 | Tool | Kind | Own CLAUDE.md |
 |---|---|---|
@@ -8,6 +8,7 @@ Four self-contained bash tools for Unraid, each in its own subdirectory:
 | `DeepScanScriptClaude/` | Interactive storage-usage scan | ✓ |
 | `immich-backup/` | Interactive stop-stack backup | ✓ |
 | `nvidia-healthcheck/` | Silent cron GPU check | — |
+| `media-lockdown/` | Interactive+scheduled media-library lockdown (writes: chmod/quarantine) | ✓ |
 
 Each tool ships as a single `script.sh` (or `script`) file. See each
 tool's `CLAUDE.md` for its own constraints. See [`README.md`](README.md)
@@ -17,7 +18,7 @@ for the front door and [`HANDOFF.md`](HANDOFF.md) for cross-tool state.
 
 Every tool in this repo carries the herbiewalker code brand:
 
-- **Interactive tools** (3): inline `brand_banner_modern` block near the
+- **Interactive tools** (4): inline `brand_banner_modern` block near the
   startup path; called at the top of `main()` or right above the tool's
   existing `print_banner_modern`. Prints to a TTY, no-ops in User
   Scripts / cron.
@@ -28,7 +29,7 @@ Every tool in this repo carries the herbiewalker code brand:
 **Canonical source**: `DevPlaybook/templates/brand/brand.sh` — the block
 inlined into each tool is a self-contained copy. If the canonical brand
 ever changes (new colour, new sigil, new banner shape), update the
-canonical source first, then re-sync all four tools here in one commit.
+canonical source first, then re-sync all five tools here in one commit.
 
 Grep for the inlined block:
 
